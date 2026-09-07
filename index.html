@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Qberries Lunch Admin</title>
+    <link rel="icon" href="favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" href="icon-192.png" sizes="192x192" />
+    <link rel="apple-touch-icon" href="icon-192.png" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="theme-color" content="#55A846" />
+    <meta name="qberries-api" content="https://script.google.com/macros/s/AKfycbwJ96j5p83jznd5y1lj345TguxKoczjZkJnHIpY7IxBg8gt5P7v1TVb8_I0cTLQ-lwy/exec" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&display=swap" rel="stylesheet" /></noscript>
+    <link rel="stylesheet" href="css/app.css" />
+  </head>
+  <body>
+    <div id="backdrop" class="backdrop"></div>
+    <div id="team-modal" class="modal">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="team-title">
+        <header class="modal-head">
+          <div>
+            <p class="muted" id="team-kicker">Agregar, quitar o cambiar el destino de hoy</p>
+            <h2 id="team-title">Equipo</h2>
+          </div>
+          <button type="button" id="team-close" class="icon-btn" aria-label="Cerrar">×</button>
+        </header>
+        <label class="search-wrap modal-search">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="team-q" class="search" type="search" placeholder="Buscar por DNI o apellido…" autocomplete="off" />
+        </label>
+        <form id="team-add" class="team-panel team-add">
+          <p class="team-add-label">Agregar comida a la lista de hoy</p>
+          <div class="team-add-grid">
+            <input name="dni" inputmode="numeric" maxlength="8" placeholder="DNI" autocomplete="off" required />
+            <input name="apellido" placeholder="Apellidos" autocomplete="off" required />
+            <input name="nombres" placeholder="Nombres" autocomplete="off" required />
+            <button type="submit" class="page-btn team-btn-ok" id="team-add-btn">Agregar</button>
+          </div>
+        </form>
+        <form id="team-dest" class="team-panel team-dest">
+          <p class="team-add-label">Editar comedor y fundo</p>
+          <div class="team-dest-grid">
+            <div class="pick team-pick" id="team-comedor-pick">
+              <input type="hidden" id="team-comedor" name="comedor" />
+              <button type="button" class="pick-btn" id="team-comedor-btn" aria-haspopup="listbox" aria-expanded="false" aria-label="Elegir comedor">
+                <span class="pick-label"><small>Comedor</small><strong id="team-comedor-text">Comedor</strong></span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <div class="pick-menu" id="team-comedor-menu" role="listbox" hidden></div>
+            </div>
+            <div class="pick team-pick" id="team-fundo-pick">
+              <input type="hidden" id="team-fundo" name="fundo" />
+              <button type="button" class="pick-btn" id="team-fundo-btn" aria-haspopup="listbox" aria-expanded="false" aria-label="Elegir fundo">
+                <span class="pick-label"><small>Fundo</small><strong id="team-fundo-text">LICAPA I</strong></span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <div class="pick-menu" id="team-fundo-menu" role="listbox" hidden></div>
+            </div>
+            <button type="submit" class="page-btn team-btn-edit" id="team-dest-btn">Editar</button>
+          </div>
+        </form>
+        <p class="muted modal-count" id="team-count"></p>
+        <div id="team-list" class="team-list"></div>
+        <div id="team-pager" class="team-pager" hidden></div>
+      </div>
+    </div>
+    <aside id="sidebar" class="sidebar">
+      <a class="brand" href="#/dashboard">
+        <img id="logo" src="logo-qberries.png" alt="Qberries" width="140" height="42" decoding="async" />
+      </a>
+      <nav id="nav" class="nav"></nav>
+      <div class="side-profile">
+        <div class="side-chef">
+          <img src="jefe.png" alt="Jefe de RH" width="72" height="72" decoding="async" />
+        </div>
+        <div class="side-user">
+          <span class="avatar">RH</span>
+          <div>
+            <strong>Jefe de RH</strong>
+            <small>Administración</small>
+          </div>
+        </div>
+      </div>
+    </aside>
+    <div class="shell">
+      <header class="top">
+        <button id="menu" class="icon-btn menu-btn" type="button" aria-label="Menú">☰</button>
+        <label class="search-wrap">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="q" class="search" type="search" placeholder="Buscar supervisor, DNI o reserva…" />
+        </label>
+        <div class="top-actions">
+          <div class="notice">
+            <button id="notice-btn" class="icon-btn notice-btn" type="button" aria-label="Notificaciones de extras" aria-expanded="false">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>
+              <span id="notice-badge" class="notice-badge" hidden>0</span>
+            </button>
+            <div id="notice-panel" class="notice-panel" hidden>
+              <header class="notice-head">
+                <div>
+                  <h2>Extras de hoy</h2>
+                  <p class="muted" id="notice-sub"></p>
+                </div>
+              </header>
+              <div id="notice-list" class="notice-list"></div>
+            </div>
+          </div>
+          <button id="refresh-btn" class="icon-btn refresh-btn" type="button" aria-label="Actualizar datos">
+            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></svg>
+          </button>
+          <div class="hello">
+            <span class="hello-pic"><img class="avatar-pic" src="jefe.png" alt="Jefe de RH" width="36" height="36" decoding="async" /></span>
+            <span class="hello-meta">
+              <strong>Jefe de RH</strong>
+              <small>Administración</small>
+            </span>
+          </div>
+        </div>
+      </header>
+      <div id="api-bar" class="api-bar" hidden>
+        <span class="api-bar-dot" aria-hidden="true"></span>
+        <p id="api-bar-text">Cargando reservas…</p>
+        <button type="button" id="api-retry" class="tool-btn">Reintentar</button>
+      </div>
+      <p id="data-stamp" class="data-stamp" hidden></p>
+      <main id="app"></main>
+    </div>
+    <div id="toast" class="toast" hidden role="status" aria-live="polite"></div>
+    <div id="file-warn" class="sync" hidden>
+      <div class="sync-card" role="alertdialog" aria-modal="true" aria-labelledby="file-warn-title">
+        <h3 id="file-warn-title">Ábrelo con Live Server</h3>
+        <p>El panel no puede leer la hoja de cálculo si lo abres con doble clic. En Cursor o VS Code usa <strong>Open with Live Server</strong> y entra por <strong>http://127.0.0.1</strong>.</p>
+      </div>
+    </div>
+    <div id="sync" class="sync" hidden>
+      <div class="sync-card" role="dialog" aria-modal="true" aria-labelledby="sync-title">
+        <div class="sync-ring" id="sync-ring" aria-hidden="true"></div>
+        <h3 id="sync-title">Revisando datos</h3>
+        <p id="sync-text">Consultando la lista de hoy y los extras.</p>
+      </div>
+    </div>
+    <div id="swal" class="swal" hidden>
+      <div class="swal-card" role="dialog" aria-modal="true" aria-labelledby="swal-title">
+        <h3 id="swal-title"></h3>
+        <p id="swal-text"></p>
+        <div class="swal-actions">
+          <button type="button" id="swal-cancel">Cancelar</button>
+          <button type="button" id="swal-ok">Quitar</button>
+        </div>
+      </div>
+    </div>
+    <script src="js/config.js"></script>
+    <script src="js/store.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/report.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>
