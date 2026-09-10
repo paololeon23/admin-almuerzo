@@ -105,37 +105,57 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
   }
-  function colLetter(n) {
-    var s = "";
-    var x = n;
-    while (x > 0) {
-      var m = (x - 1) % 26;
-      s = String.fromCharCode(65 + m) + s;
-      x = Math.floor((x - 1) / 26);
-    }
-    return s;
+  function defaultColumns() {
+    return [
+      { key: "supervisor", label: "Supervisor", align: "left", width: 38 },
+      { key: "comidas", label: "Comidas", align: "center", width: 12, num: true },
+      { key: "extras", label: "Extras", align: "center", width: 12, num: true },
+      { key: "comedor", label: "Comedor", align: "left", width: 28 },
+      { key: "total", label: "Total", align: "center", width: 12, num: true },
+    ];
   }
-  function totalsOf(rows) {
-    return rows.reduce(
-      function (acc, r) {
-        acc.comidas += Number(r.comidas) || 0;
-        acc.extras += Number(r.extras) || 0;
-        acc.total += Number(r.total) || 0;
-        return acc;
-      },
-      { comidas: 0, extras: 0, total: 0 }
-    );
+  function columnsOf(meta) {
+    return meta && meta.columns && meta.columns.length ? meta.columns : defaultColumns();
+  }
+  function sheetNameOf(meta) {
+    var name = String((meta && meta.sheet) || "Listado").replace(/[\\/*?:\[\]]/g, " ").trim();
+    return name.slice(0, 31) || "Listado";
+  }
+  function footerOf(rows, meta, cols) {
+    if (meta && meta.footer) return meta.footer;
+    var out = {};
+    cols.forEach(function (col, i) {
+      if (i === 0) out[col.key] = "Total";
+      else if (col.num) {
+        out[col.key] = rows.reduce(function (a, r) {
+          return a + (Number(r[col.key]) || 0);
+        }, 0);
+      } else out[col.key] = "";
+    });
+    return out;
   }
 
   function xlsx(rows, meta) {
-    var tot = totalsOf(rows);
-    var title = (meta && meta.title) || "Qberries · Verificación de almuerzos";
+    var cols = columnsOf(meta);
+    var title = (meta && meta.title) || "Qberries";
     var subtitle = (meta && meta.subtitle) || "";
+    var foot = footerOf(rows, meta, cols);
+    var lastCol = cols.length;
     function cellInline(ref, text, style) {
       return '<c r="' + ref + '" t="inlineStr" s="' + style + '"><is><t>' + xmlEsc(text) + "</t></is></c>";
     }
     function cellNum(ref, num, style) {
       return '<c r="' + ref + '" s="' + style + '"><v>' + Number(num) + "</v></c>";
+    }
+    function colLetter(n) {
+      var s = "";
+      var x = n;
+      while (x > 0) {
+        var m = (x - 1) % 26;
+        s = String.fromCharCode(65 + m) + s;
+        x = Math.floor((x - 1) / 26);
+      }
+      return s;
     }
     var sheetRows = [];
     sheetRows.push('<row r="1" ht="24" customHeight="1">' + cellInline("A1", title, 1) + "</row>");
@@ -143,27 +163,28 @@
     sheetRows.push('<row r="3"></row>');
     sheetRows.push(
       '<row r="4" ht="22" customHeight="1">' +
-        cellInline("A4", "Supervisor", 3) +
-        cellInline("B4", "Comidas", 3) +
-        cellInline("C4", "Extras", 3) +
-        cellInline("D4", "Comedor", 3) +
-        cellInline("E4", "Total", 3) +
+        cols
+          .map(function (col, i) {
+            return cellInline(colLetter(i + 1) + "4", col.label, 3);
+          })
+          .join("") +
         "</row>"
     );
     rows.forEach(function (r, i) {
       var n = 5 + i;
       var zebra = i % 2 === 1;
-      var ts = zebra ? 6 : 4;
-      var ns = zebra ? 7 : 5;
       sheetRows.push(
         '<row r="' +
           n +
           '" ht="20" customHeight="1">' +
-          cellInline("A" + n, r.supervisor, ts) +
-          cellNum("B" + n, r.comidas, ns) +
-          cellNum("C" + n, r.extras, ns) +
-          cellInline("D" + n, r.comedor, ts) +
-          cellNum("E" + n, r.total, ns) +
+          cols
+            .map(function (col, ci) {
+              var ref = colLetter(ci + 1) + n;
+              var val = r[col.key];
+              if (col.num) return cellNum(ref, val, zebra ? 7 : 5);
+              return cellInline(ref, val == null ? "" : String(val), zebra ? 6 : 4);
+            })
+            .join("") +
           "</row>"
       );
     });
@@ -172,24 +193,39 @@
       '<row r="' +
         last +
         '" ht="22" customHeight="1">' +
-        cellInline("A" + last, "Verificación", 8) +
-        cellNum("B" + last, tot.comidas, 9) +
-        cellNum("C" + last, tot.extras, 9) +
-        cellInline("D" + last, rows.length + " supervisores", 8) +
-        cellNum("E" + last, tot.total, 9) +
+        cols
+          .map(function (col, ci) {
+            var ref = colLetter(ci + 1) + last;
+            var val = foot[col.key];
+            if (col.num) return cellNum(ref, val == null ? 0 : val, 9);
+            return cellInline(ref, val == null ? "" : String(val), 8);
+          })
+          .join("") +
         "</row>"
     );
+    var colXml = cols
+      .map(function (col, i) {
+        return '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + (col.width || 16) + '" customWidth="1"/>';
+      })
+      .join("");
+    var mergeEnd = colLetter(lastCol);
     var sheet =
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
       '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
-      "<sheetPr><pageSetUpPr fitToPage=\"1\"/></sheetPr>" +
+      '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>' +
       '<sheetViews><sheetView workbookViewId="0"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' +
       '<sheetFormatPr defaultRowHeight="18"/>' +
-      '<cols><col min="1" max="1" width="38" customWidth="1"/><col min="2" max="3" width="12" customWidth="1"/><col min="4" max="4" width="28" customWidth="1"/><col min="5" max="5" width="12" customWidth="1"/></cols>' +
+      "<cols>" +
+      colXml +
+      "</cols>" +
       "<sheetData>" +
       sheetRows.join("") +
       "</sheetData>" +
-      '<mergeCells count="2"><mergeCell ref="A1:E1"/><mergeCell ref="A2:E2"/></mergeCells>' +
+      '<mergeCells count="2"><mergeCell ref="A1:' +
+      mergeEnd +
+      '1"/><mergeCell ref="A2:' +
+      mergeEnd +
+      '2"/></mergeCells>' +
       '<pageMargins left="0.5" right="0.5" top="0.6" bottom="0.6" header="0.3" footer="0.3"/>' +
       '<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="1"/>' +
       "</worksheet>";
@@ -230,7 +266,9 @@
     var workbook =
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
       '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
-      '<sheets><sheet name="Verificación" sheetId="1" r:id="rId1"/></sheets></workbook>';
+      '<sheets><sheet name="' +
+      xmlEsc(sheetNameOf(meta)) +
+      '" sheetId="1" r:id="rId1"/></sheets></workbook>';
     var rels =
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
       '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
@@ -283,20 +321,34 @@
     return s.length > max ? s.slice(0, max - 1) + "." : s;
   }
   function pdf(rows, meta) {
-    var tot = totalsOf(rows);
+    var colsMeta = columnsOf(meta);
     var title = (meta && meta.title) || "Qberries";
     var subtitle = (meta && meta.subtitle) || "";
+    var foot = footerOf(rows, meta, colsMeta);
     var W = 842;
     var H = 595;
     var margin = 36;
     var headerH = 54;
-    var cols = [
-      { x: margin, w: 250, key: "supervisor", label: "SUPERVISOR", align: "left" },
-      { x: margin + 250, w: 80, key: "comidas", label: "COMIDAS", align: "center" },
-      { x: margin + 330, w: 80, key: "extras", label: "EXTRAS", align: "center" },
-      { x: margin + 410, w: 260, key: "comedor", label: "COMEDOR", align: "left" },
-      { x: margin + 670, w: 136, key: "total", label: "TOTAL", align: "center" },
-    ];
+    var usable = W - margin * 2;
+    var weightSum = colsMeta.reduce(function (a, c) {
+      return a + (c.width || 16);
+    }, 0);
+    var x = margin;
+    var cols = colsMeta.map(function (col) {
+      var w = Math.floor((usable * (col.width || 16)) / weightSum);
+      var item = {
+        x: x,
+        w: w,
+        key: col.key,
+        label: String(col.label || "").toUpperCase(),
+        align: col.align || (col.num ? "center" : "left"),
+        num: !!col.num,
+        clip: col.clip || (col.num ? 10 : 36),
+      };
+      x += w;
+      return item;
+    });
+    if (cols.length) cols[cols.length - 1].w = margin + usable - cols[cols.length - 1].x;
     var rowH = 22;
     var tableTop = H - headerH - 58;
     var pages = [];
@@ -317,7 +369,7 @@
       s.push("0.247 0.529 0.212 rg " + margin + " " + y + " " + (W - margin * 2) + " " + rowH + " re f");
       s.push("1 1 1 rg");
       cols.forEach(function (col) {
-        var tx = col.align === "center" ? col.x + col.w / 2 - 18 : col.x + 8;
+        var tx = col.align === "center" ? col.x + col.w / 2 - Math.min(28, col.label.length * 2.4) : col.x + 8;
         s.push("BT /F2 8 Tf " + tx + " " + (y + 7) + " Td (" + pdfEscape(col.label) + ") Tj ET");
       });
       y -= rowH;
@@ -325,9 +377,8 @@
         if (i % 2 === 1) s.push("0.918 0.965 0.906 rg " + margin + " " + y + " " + (W - margin * 2) + " " + rowH + " re f");
         s.push("0.106 0.122 0.141 rg");
         cols.forEach(function (col) {
-          var val = r[col.key];
-          var text = col.key === "supervisor" ? clip(val, 42) : col.key === "comedor" ? clip(val, 44) : String(val);
-          var tx = col.align === "center" ? col.x + col.w / 2 - (String(text).length * 3) : col.x + 8;
+          var text = clip(r[col.key], col.clip);
+          var tx = col.align === "center" ? col.x + col.w / 2 - String(text).length * 3 : col.x + 8;
           s.push("BT /F1 9 Tf " + tx + " " + (y + 7) + " Td (" + pdfEscape(text) + ") Tj ET");
         });
         y -= rowH;
@@ -335,11 +386,11 @@
       if (isLast) {
         s.push("0.918 0.965 0.906 rg " + margin + " " + y + " " + (W - margin * 2) + " " + rowH + " re f");
         s.push("0.247 0.529 0.212 rg");
-        s.push("BT /F2 9 Tf " + (cols[0].x + 8) + " " + (y + 7) + " Td (Verificacion) Tj ET");
-        s.push("BT /F2 9 Tf " + (cols[1].x + 28) + " " + (y + 7) + " Td (" + tot.comidas + ") Tj ET");
-        s.push("BT /F2 9 Tf " + (cols[2].x + 28) + " " + (y + 7) + " Td (" + tot.extras + ") Tj ET");
-        s.push("BT /F2 9 Tf " + (cols[3].x + 8) + " " + (y + 7) + " Td (" + pdfEscape(rows.length + " supervisores") + ") Tj ET");
-        s.push("BT /F2 9 Tf " + (cols[4].x + 48) + " " + (y + 7) + " Td (" + tot.total + ") Tj ET");
+        cols.forEach(function (col) {
+          var text = clip(foot[col.key], col.clip);
+          var tx = col.align === "center" ? col.x + col.w / 2 - String(text).length * 3 : col.x + 8;
+          s.push("BT /F2 9 Tf " + tx + " " + (y + 7) + " Td (" + pdfEscape(text) + ") Tj ET");
+        });
         y -= 28;
         s.push("0.42 0.45 0.49 rg");
         s.push("BT /F1 8 Tf 36 24 Td (Documento generado por Qberries Lunch Admin  -  uso interno) Tj ET");

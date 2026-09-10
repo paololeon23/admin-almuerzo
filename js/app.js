@@ -186,6 +186,291 @@
     });
     return list;
   }
+  var DEFAULT_VENDORS = [
+    { id: "valle", name: "Refrigerios del Valle", short: "Valle" },
+    { id: "gemelitas", name: "Gemelitas", short: "Gemelitas" },
+  ];
+  var VENDOR_STORE = "qberries.kitchenVendors";
+  var VENDOR_CATALOG_STORE = "qberries.kitchenVendorCatalog";
+  var VENDORS = DEFAULT_VENDORS.slice();
+  var kitchenVendors = {};
+  var kitchenVendorFilter = "all";
+  var kitchenListPage = 1;
+  var KITCHEN_LIST_SIZE = 8;
+  function vendorShortFromName(name) {
+    var parts = String(name || "")
+      .trim()
+      .split(/\s+/);
+    if (!parts[0]) return "Dist.";
+    if (parts.length === 1) return parts[0].slice(0, 14);
+    if (/^(del|de|la|los|las)$/i.test(parts[parts.length - 2] || "")) {
+      return parts[parts.length - 1].slice(0, 14);
+    }
+    return parts[parts.length - 1].slice(0, 14);
+  }
+  function vendorIdFromName(name) {
+    var base = String(name || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40);
+    return base || "dist";
+  }
+  function normalizeVendorList(list) {
+    var out = [];
+    var seen = {};
+    (Array.isArray(list) ? list : []).forEach(function (item) {
+      if (!item || typeof item !== "object") return;
+      var name = String(item.name || "").trim();
+      if (!name) return;
+      var id = String(item.id || vendorIdFromName(name)).trim() || vendorIdFromName(name);
+      if (seen[id]) return;
+      seen[id] = true;
+      out.push({
+        id: id,
+        name: name,
+        short: String(item.short || vendorShortFromName(name)).trim() || vendorShortFromName(name),
+      });
+    });
+    return out;
+  }
+  function saveVendorCatalog() {
+    try {
+      root.localStorage.setItem(VENDOR_CATALOG_STORE, JSON.stringify(VENDORS));
+    } catch (err) {}
+  }
+  (function loadVendorCatalog() {
+    try {
+      var raw = JSON.parse(root.localStorage.getItem(VENDOR_CATALOG_STORE) || "null");
+      var list = normalizeVendorList(raw);
+      VENDORS = list.length ? list : DEFAULT_VENDORS.slice();
+    } catch (err) {
+      VENDORS = DEFAULT_VENDORS.slice();
+    }
+  })();
+  (function loadKitchenVendors() {
+    try {
+      var raw = JSON.parse(root.localStorage.getItem(VENDOR_STORE) || "{}");
+      if (raw && typeof raw === "object") kitchenVendors = raw;
+    } catch (err) {
+      kitchenVendors = {};
+    }
+  })();
+  function saveKitchenVendors() {
+    try {
+      root.localStorage.setItem(VENDOR_STORE, JSON.stringify(kitchenVendors));
+    } catch (err) {}
+  }
+  function findVendor(id) {
+    var i;
+    for (i = 0; i < VENDORS.length; i += 1) {
+      if (VENDORS[i].id === id) return VENDORS[i];
+    }
+    return null;
+  }
+  function vendorName(id) {
+    var v = findVendor(id);
+    return v ? v.name : "Sin proveedor";
+  }
+  function vendorShort(id) {
+    var v = findVendor(id);
+    return v ? v.short : "—";
+  }
+  function isKnownVendor(id) {
+    return !!findVendor(id);
+  }
+  function vendorOfHall(name) {
+    return String(kitchenVendors[name] || "");
+  }
+  function setHallVendor(hall, vendorId, opts) {
+    hall = String(hall || "").trim();
+    if (!hall) return;
+    opts = opts || {};
+    vendorId = String(vendorId || "").trim();
+    if (opts.toggle && isKnownVendor(vendorId) && kitchenVendors[hall] === vendorId) {
+      delete kitchenVendors[hall];
+    } else if (isKnownVendor(vendorId)) {
+      kitchenVendors[hall] = vendorId;
+    } else {
+      delete kitchenVendors[hall];
+    }
+    saveKitchenVendors();
+    paintVendorBoard();
+    if (!opts.silent) paint();
+  }
+  function addDistributor(name) {
+    name = String(name || "").trim();
+    if (!name) return { ok: false, error: "Escribe el nombre." };
+    var folded = fold(name);
+    var i;
+    for (i = 0; i < VENDORS.length; i += 1) {
+      if (fold(VENDORS[i].name) === folded) {
+        return { ok: false, error: "Esa distribuidora ya está registrada." };
+      }
+    }
+    var base = vendorIdFromName(name);
+    var id = base;
+    var n = 2;
+    while (findVendor(id)) {
+      id = base + "-" + n;
+      n += 1;
+    }
+    VENDORS.push({ id: id, name: name, short: vendorShortFromName(name) });
+    saveVendorCatalog();
+    return { ok: true, id: id };
+  }
+  function removeDistributor(id) {
+    id = String(id || "").trim();
+    if (!findVendor(id)) return false;
+    VENDORS = VENDORS.filter(function (v) {
+      return v.id !== id;
+    });
+    Object.keys(kitchenVendors).forEach(function (hall) {
+      if (kitchenVendors[hall] === id) delete kitchenVendors[hall];
+    });
+    if (kitchenVendorFilter === id) kitchenVendorFilter = "all";
+    saveVendorCatalog();
+    saveKitchenVendors();
+    return true;
+  }
+  function paintDistList() {
+    var box = document.getElementById("dist-list");
+    if (!box) return;
+    if (!VENDORS.length) {
+      box.innerHTML = '<p class="empty">Aún no hay distribuidoras. Registra la primera.</p>';
+      return;
+    }
+    box.innerHTML = VENDORS.map(function (v) {
+      return (
+        '<div class="dist-row">' +
+        "<div><strong>" +
+        esc(v.name) +
+        "</strong><small>" +
+        esc(v.short) +
+        '</small></div><button type="button" class="dist-del" data-dist-del="' +
+        esc(v.id) +
+        '">Eliminar</button></div>'
+      );
+    }).join("");
+  }
+  function openDistModal() {
+    var modal = document.getElementById("dist-modal");
+    var input = document.getElementById("dist-name");
+    if (!modal) return;
+    paintDistList();
+    modal.classList.add("open");
+    document.body.style.overflow = "hidden";
+    if (input) {
+      input.value = "";
+      root.setTimeout(function () {
+        input.focus();
+      }, 40);
+    }
+  }
+  function closeDistModal() {
+    var modal = document.getElementById("dist-modal");
+    if (modal) modal.classList.remove("open");
+    document.body.style.overflow = "";
+    paint();
+  }
+  var vendorPickHall = "";
+  function hallShort(name) {
+    return String(name || "").replace(/^Comedor\s+/i, "C. ");
+  }
+  function vendorTileHtml(c) {
+    return (
+      '<button type="button" class="vendor-tile" draggable="true" data-vendor-tile="' +
+      esc(c.name) +
+      '"><strong>' +
+      esc(c.name) +
+      "</strong><span>" +
+      c.count +
+      "</span></button>"
+    );
+  }
+  function paintVendorBoard() {
+    var board = document.getElementById("vendor-board");
+    if (!board) return;
+    var halls = comedorCounts(ALL, TODAY);
+    var groups = { none: [] };
+    VENDORS.forEach(function (v) {
+      groups[v.id] = [];
+    });
+    halls.forEach(function (c) {
+      var vid = vendorOfHall(c.name) || "none";
+      if (!groups[vid]) groups.none.push(c);
+      else groups[vid].push(c);
+    });
+    function bin(id, title, extraClass) {
+      var list = groups[id] || [];
+      return (
+        '<section class="vendor-bin ' +
+        extraClass +
+        '" data-drop="' +
+        id +
+        '"><header><h3>' +
+        esc(title) +
+        "</h3><b>" +
+        list.length +
+        "</b></header><div class=\"vendor-tiles\">" +
+        (list.length ? list.map(vendorTileHtml).join("") : '<p class="vendor-drop-hint">Suelta aquí</p>') +
+        "</div></section>"
+      );
+    }
+    var tone = ["is-valle", "is-gem", "is-extra", "is-mint"];
+    board.innerHTML =
+      bin("none", "Sin asignar", "is-pool") +
+      VENDORS.map(function (v, idx) {
+        return bin(v.id, v.name, tone[idx % tone.length]);
+      }).join("");
+    if (vendorPickHall) {
+      var on = board.querySelector('[data-vendor-tile="' + vendorPickHall.replace(/"/g, "") + '"]');
+      if (on) on.classList.add("is-picked");
+    }
+    var hint = document.getElementById("vendor-hint");
+    if (hint) {
+      hint.textContent = vendorPickHall
+        ? "Toca el recuadro del proveedor para lanzar " + vendorPickHall + "."
+        : "Arrastra cada comedor al recuadro. En celular, tócalo y luego toca el proveedor.";
+    }
+  }
+  function openVendorModal() {
+    var modal = document.getElementById("vendor-modal");
+    if (!modal) return;
+    vendorPickHall = "";
+    paintVendorBoard();
+    modal.classList.add("open");
+    document.body.style.overflow = "hidden";
+  }
+  function closeVendorModal() {
+    var modal = document.getElementById("vendor-modal");
+    vendorPickHall = "";
+    if (modal) modal.classList.remove("open");
+    document.body.style.overflow = "";
+    paint();
+  }
+  function closeKitchenPicks() {
+    document.querySelectorAll(".k-vendor-pick.open").forEach(function (el) {
+      el.classList.remove("open");
+      var menu = el.querySelector(".pick-menu");
+      var btn = el.querySelector(".pick-btn");
+      if (menu) menu.hidden = true;
+      if (btn) btn.setAttribute("aria-expanded", "false");
+    });
+  }
+  function toggleKitchenPick(pick) {
+    var wasOpen = pick.classList.contains("open");
+    closeKitchenPicks();
+    closeReservaPick();
+    if (wasOpen) return;
+    pick.classList.add("open");
+    var menu = pick.querySelector(".pick-menu");
+    var btn = pick.querySelector(".pick-btn");
+    if (menu) menu.hidden = false;
+    if (btn) btn.setAttribute("aria-expanded", "true");
+  }
   function supervisorOptions() {
     var seen = {};
     var list = [];
@@ -1592,6 +1877,7 @@
         TODAY = now;
         stamp = "";
         viewMemo = { stamp: "", map: {} };
+        clearNoticeSeen();
         requestPaint();
       }
       if (!CONFIG.apiUrl) return Promise.resolve(false);
@@ -1942,7 +2228,7 @@
   function supervisorTable(rows, stats, coms) {
     if (!rows.length) return emptyState("No hay supervisores con ese criterio.");
     return (
-      '<div class="table-wrap"><table class="verify-table"><thead><tr><th>Supervisor</th><th>Comidas</th><th>Extras</th><th>Comedor</th><th>Total</th></tr></thead><tbody>' +
+      '<div class="table-wrap"><table class="admin-table verify-table"><thead><tr><th>Supervisor</th><th>Lista</th><th>Extras</th><th>Comedor</th><th>Total</th></tr></thead><tbody>' +
       rows
         .map(function (s) {
           var destText = destLabel(s);
@@ -1965,13 +2251,13 @@
             (s.extras ? "<span class='badge warn'>" + s.extras + " extra" + (s.extras === 1 ? "" : "s") + "</span>" : "<span class='muted'>Sin extras</span>") +
             "</td><td>" +
             esc(destText) +
-            "</td><td style='font-weight:700'>" +
+            "</td><td class='num-strong'>" +
             s.meals +
             "</td></tr>"
           );
         })
         .join("") +
-      '</tbody><tfoot><tr class="foot"><td>Verificación</td><td>' +
+      '</tbody><tfoot><tr class="foot"><td>Total</td><td>' +
       stats.regular +
       "</td><td>" +
       stats.extras +
@@ -1983,13 +2269,24 @@
       "</td></tr></tfoot></table></div>"
     );
   }
+  function exportButtonsHtml(scope) {
+    return (
+      '<div class="export-btns">' +
+      '<button type="button" class="tool-btn export-btn" data-export="excel" data-scope="' +
+      esc(scope) +
+      '">Excel</button>' +
+      '<button type="button" class="tool-btn tool-btn-dark export-btn" data-export="pdf" data-scope="' +
+      esc(scope) +
+      '">PDF</button>' +
+      "</div>"
+    );
+  }
   function verifyToolbar() {
     return (
-      '<div class="verify-head"><h2>Verificación</h2><div class="verify-tools">' +
+      '<div class="verify-head"><div><h2>Verificación</h2><p class="reserva-count">Listado formal por supervisor</p></div><div class="verify-tools">' +
       '<label class="verify-search"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>' +
       '<input id="verify-q" type="search" placeholder="Buscar supervisor o comedor…" autocomplete="off" /></label>' +
-      '<button type="button" class="tool-btn" data-export="excel">Excel</button>' +
-      '<button type="button" class="tool-btn tool-btn-dark" data-export="pdf">PDF</button>' +
+      exportButtonsHtml("verify") +
       "</div></div>"
     );
   }
@@ -2030,40 +2327,158 @@
     return {
       title: "Qberries · Verificación de almuerzos",
       subtitle: longDate(TODAY) + "  ·  Listado por supervisor y cantidades",
+      sheet: "Verificación",
+      columns: [
+        { key: "supervisor", label: "Supervisor", align: "left", width: 38 },
+        { key: "comidas", label: "Lista", align: "center", width: 12, num: true },
+        { key: "extras", label: "Extras", align: "center", width: 12, num: true },
+        { key: "comedor", label: "Comedor", align: "left", width: 28 },
+        { key: "total", label: "Total", align: "center", width: 12, num: true },
+      ],
+      footer: (function () {
+        var rows = verifyExportRows();
+        var comidas = 0;
+        var extras = 0;
+        var total = 0;
+        var comedores = {};
+        rows.forEach(function (r) {
+          comidas += Number(r.comidas) || 0;
+          extras += Number(r.extras) || 0;
+          total += Number(r.total) || 0;
+          var hall = String(r.comedor || "").split("·")[0].trim();
+          if (hall) comedores[hall] = true;
+        });
+        return {
+          supervisor: "Total",
+          comidas: comidas,
+          extras: extras,
+          comedor: Object.keys(comedores).length + " comedores",
+          total: total,
+        };
+      })(),
+    };
+  }
+  function comedorExportRows() {
+    return byComedor(ALL, TODAY).map(function (c) {
+      return {
+        comedor: c.name,
+        lista: c.regular,
+        extras: c.extras,
+        total: c.meals,
+        supervisores: c.supervisors.length,
+      };
+    });
+  }
+  function comedorExportMeta(rows) {
+    var lista = 0;
+    var extras = 0;
+    var total = 0;
+    var supervisores = 0;
+    rows.forEach(function (r) {
+      lista += Number(r.lista) || 0;
+      extras += Number(r.extras) || 0;
+      total += Number(r.total) || 0;
+      supervisores += Number(r.supervisores) || 0;
+    });
+    return {
+      title: "Qberries · Comedores",
+      subtitle: longDate(TODAY) + "  ·  Envíos por comedor",
+      sheet: "Comedores",
+      columns: [
+        { key: "comedor", label: "Comedor", align: "left", width: 28 },
+        { key: "lista", label: "Lista", align: "center", width: 12, num: true },
+        { key: "extras", label: "Extras", align: "center", width: 12, num: true },
+        { key: "total", label: "Total", align: "center", width: 12, num: true },
+        { key: "supervisores", label: "Supervisores", align: "center", width: 14, num: true },
+      ],
+      footer: {
+        comedor: "Total",
+        lista: lista,
+        extras: extras,
+        total: total,
+        supervisores: supervisores,
+      },
+    };
+  }
+  function reservaExportRows() {
+    return filteredReservas().map(function (r) {
+      var parts = personParts(r);
+      var st = statusLabel(r);
+      return {
+        dni: r.dni,
+        trabajador: parts.full || r.name,
+        hora: r.time || "",
+        supervisor: r.supervisor || "",
+        comedor: r.sede || "",
+        tipo: st.text || "",
+      };
+    });
+  }
+  function reservaExportMeta(rows) {
+    return {
+      title: "Qberries · Reservas de hoy",
+      subtitle: longDate(TODAY) + "  ·  " + rows.length + (rows.length === 1 ? " reserva" : " reservas"),
+      sheet: "Reservas",
+      columns: [
+        { key: "dni", label: "DNI", align: "center", width: 12 },
+        { key: "trabajador", label: "Trabajador", align: "left", width: 34, clip: 42 },
+        { key: "hora", label: "Hora", align: "center", width: 10 },
+        { key: "supervisor", label: "Supervisor", align: "left", width: 28, clip: 36 },
+        { key: "comedor", label: "Comedor", align: "left", width: 18 },
+        { key: "tipo", label: "Tipo", align: "center", width: 12 },
+      ],
+      footer: {
+        dni: "Total",
+        trabajador: rows.length + (rows.length === 1 ? " reserva" : " reservas"),
+        hora: "",
+        supervisor: "",
+        comedor: "",
+        tipo: "",
+      },
     };
   }
   var exportBusy = false;
-  function exportVerifyExcel() {
+  function runExport(kind, rows, meta, fileBase) {
     if (exportBusy) return;
-    var rows = verifyExportRows();
     if (!rows.length || !root.QberriesReport) {
       toast("No hay filas para exportar.");
       return;
     }
     exportBusy = true;
-    downloadFile(
-      "Qberries_Verificacion_" + TODAY + ".xlsx",
-      root.QberriesReport.xlsx(rows, exportMeta()),
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    toast("Excel descargado.");
-    root.setTimeout(function () { exportBusy = false; }, 400);
+    var blob =
+      kind === "pdf"
+        ? root.QberriesReport.pdf(rows, meta)
+        : root.QberriesReport.xlsx(rows, meta);
+    var ext = kind === "pdf" ? ".pdf" : ".xlsx";
+    var mime =
+      kind === "pdf"
+        ? "application/pdf"
+        : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    downloadFile(fileBase + "_" + TODAY + ext, blob, mime);
+    toast(kind === "pdf" ? "PDF descargado." : "Excel descargado.");
+    root.setTimeout(function () {
+      exportBusy = false;
+    }, 400);
+  }
+  function exportVerifyExcel() {
+    runExport("excel", verifyExportRows(), exportMeta(), "Qberries_Verificacion");
   }
   function exportVerifyPdf() {
-    if (exportBusy) return;
-    var rows = verifyExportRows();
-    if (!rows.length || !root.QberriesReport) {
-      toast("No hay filas para exportar.");
+    runExport("pdf", verifyExportRows(), exportMeta(), "Qberries_Verificacion");
+  }
+  function exportByScope(kind, scope) {
+    if (scope === "comedores") {
+      var cRows = comedorExportRows();
+      runExport(kind, cRows, comedorExportMeta(cRows), "Qberries_Comedores");
       return;
     }
-    exportBusy = true;
-    downloadFile(
-      "Qberries_Verificacion_" + TODAY + ".pdf",
-      root.QberriesReport.pdf(rows, exportMeta()),
-      "application/pdf"
-    );
-    toast("PDF descargado.");
-    root.setTimeout(function () { exportBusy = false; }, 400);
+    if (scope === "reservas") {
+      var rRows = reservaExportRows();
+      runExport(kind, rRows, reservaExportMeta(rRows), "Qberries_Reservas");
+      return;
+    }
+    if (kind === "pdf") exportVerifyPdf();
+    else exportVerifyExcel();
   }
   function filterVerifyTable(query) {
     var table = document.querySelector(".verify-table");
@@ -2198,6 +2613,38 @@
     var rows = byComedor(ALL, TODAY);
     var total = rows.reduce(function (a, b) { return a + b.meals; }, 0);
     var extras = rows.reduce(function (a, b) { return a + b.extras; }, 0);
+    var lista = rows.reduce(function (a, b) { return a + b.regular; }, 0);
+    var table = rows.length
+      ? '<div class="table-wrap"><table class="admin-table comedor-table"><thead><tr><th>Comedor</th><th>Lista</th><th>Extras</th><th>Total</th><th>Supervisores</th></tr></thead><tbody>' +
+        rows
+          .map(function (c) {
+            return (
+              "<tr><td><strong>" +
+              esc(c.name) +
+              "</strong></td><td>" +
+              c.regular +
+              "</td><td>" +
+              (c.extras
+                ? "<span class='badge warn'>" + c.extras + " extra" + (c.extras === 1 ? "" : "s") + "</span>"
+                : "<span class='muted'>Sin extras</span>") +
+              "</td><td class='num-strong'>" +
+              c.meals +
+              "</td><td>" +
+              c.supervisors.length +
+              "</td></tr>"
+            );
+          })
+          .join("") +
+        '</tbody><tfoot><tr class="foot"><td>Total</td><td>' +
+        lista +
+        "</td><td>" +
+        extras +
+        "</td><td>" +
+        total +
+        "</td><td>" +
+        rows.reduce(function (a, b) { return a + b.supervisors.length; }, 0) +
+        "</td></tr></tfoot></table></div>"
+      : emptyState("Hoy no hay comidas para enviar.");
     return (
       '<header class="page-head"><p class="kicker">Administración</p><h1 class="h1">Comedores</h1><p class="sub">A qué comedor se envían las comidas y cuántas extras lleva cada uno.</p></header>' +
       '<div class="grid3"><article class="card mini"><span>Comedores activos</span><b>' +
@@ -2207,32 +2654,12 @@
       '</b></article><article class="card mini mini-extras"><span>Extras</span><b>' +
       extras +
       "</b></article></div>" +
-      (rows.length
-        ? '<div class="grid2">' +
-          rows
-            .map(function (c) {
-              return (
-                '<article class="card pad"><div class="split"><div><h2>' +
-                esc(c.name) +
-                '</h2><p class="muted">' +
-                (c.supervisors.length === 1
-                  ? "1 supervisor envía aquí"
-                  : c.supervisors.length + " supervisores envían aquí") +
-                "</p></div><b class='huge'>" +
-                c.meals +
-                '</b></div><div class="chips"><span class="badge ok">' +
-                c.regular +
-                ' lista</span> <span class="badge warn">' +
-                (c.extras ? c.extras + " extras" : "Sin extras") +
-                "</span></div>" +
-                '<p class="muted pad-top">' +
-                esc(c.supervisors.join(" · ")) +
-                "</p></article>"
-              );
-            })
-            .join("") +
-          "</div>"
-        : emptyState("Hoy no hay comidas para enviar."))
+      '<section class="card verify">' +
+      '<div class="verify-head"><div><h2>Comedores</h2><p class="reserva-count">Listado formal por comedor</p></div><div class="verify-tools">' +
+      exportButtonsHtml("comedores") +
+      "</div></div>" +
+      table +
+      "</section>"
     );
   }
 
@@ -2282,7 +2709,9 @@
       '<label class="verify-search"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>' +
       '<input id="reserva-dni" type="search" inputmode="numeric" maxlength="8" placeholder="Buscar DNI…" autocomplete="off" value="' +
       esc(reservaDni) +
-      '" /></label></div></div>'
+      '" /></label>' +
+      exportButtonsHtml("reservas") +
+      "</div></div>"
     );
   }
   function todayReservas() {
@@ -2307,11 +2736,11 @@
       esc(r.supervisor) +
       '"><td>' +
       esc(r.dni) +
-      "</td><td><strong>" +
+      '</td><td><div class="person-name"><strong>' +
       esc(parts.apellido || r.name) +
       "</strong>" +
-      (parts.nombres ? "<small class='muted'> " + esc(parts.nombres) + "</small>" : "") +
-      "</td><td>" +
+      (parts.nombres ? "<small>" + esc(parts.nombres) + "</small>" : "") +
+      "</div></td><td>" +
       esc(r.time) +
       "</td><td>" +
       esc(r.supervisor) +
@@ -2430,17 +2859,23 @@
     var rows = todayReservas();
     return (
       '<header class="page-head"><p class="kicker">Administración</p><h1 class="h1">Reservas de hoy</h1><p class="sub">Filtra por supervisor o DNI. No es el listado global.</p></header>' +
-      '<section class="card reserva-card">' +
+      '<section class="card verify reserva-card">' +
       reservaToolbar(rows.length) +
-      '<div class="table-wrap"><table class="reserva-table"><thead><tr><th>DNI</th><th>Trabajador</th><th>Hora</th><th>Supervisor</th><th>Comedor</th><th>Tipo</th></tr></thead><tbody id="reserva-body"></tbody></table></div>' +
+      '<div class="table-wrap"><table class="admin-table reserva-table"><thead><tr><th>DNI</th><th>Trabajador</th><th>Hora</th><th>Supervisor</th><th>Comedor</th><th>Tipo</th></tr></thead><tbody id="reserva-body"></tbody></table></div>' +
       '<div id="reserva-pager" class="team-pager" hidden></div>' +
       "</section>"
     );
   }
 
   function renderCocina() {
-    var stats = totals(ALL, TODAY);
     var halls = comedorCounts(ALL, TODAY);
+    var visible = halls.filter(function (c) {
+      if (kitchenVendorFilter === "all") return true;
+      return vendorOfHall(c.name) === kitchenVendorFilter;
+    });
+    var visMeals = visible.reduce(function (a, c) { return a + c.count; }, 0);
+    var visExtras = visible.reduce(function (a, c) { return a + c.extras; }, 0);
+    var visLista = visMeals - visExtras;
     return (
       '<div class="kitchen">' +
       '<header class="k-head">' +
@@ -2458,36 +2893,106 @@
         );
       })() +
       "</header>" +
-      '<div class="k-board">' +
-      halls
-        .map(function (c) {
-          var lista = c.count - c.extras;
-          var note = c.count
-            ? c.extras
-              ? lista + " lista + " + c.extras + " extras"
-              : lista + " lista"
-            : "Sin envío hoy";
-          return (
-            '<div class="k-send' +
-            (c.count ? "" : " is-zero") +
-            (c.extras ? " has-extra" : "") +
-            '"><span class="k-send-name">' +
-            esc(c.name) +
-            '</span><span class="k-send-qty">' +
-            c.count +
-            "</span><small>" +
-            esc(note) +
-            "</small></div>"
-          );
-        })
-        .join("") +
-      '<div class="k-send k-send-total"><span class="k-send-name">Total</span><span class="k-send-qty">' +
-      stats.prepared +
+      '<div class="k-layout">' +
+      '<aside class="k-side">' +
+      "<h2>Proveedores</h2>" +
+      '<p class="k-side-sub">Abre el tablero y lanza cada comedor.</p>' +
+      '<button type="button" class="k-open-vendors" data-open-vendors>Asignar comedores</button>' +
+      '<button type="button" class="k-open-vendors k-open-dist" data-open-dist>Agregar distribuidora</button>' +
+      '<label class="k-filter">' +
+      '<select id="kitchen-vendor-filter" class="k-filter-select" aria-label="Filtrar proveedor">' +
+      '<option value="all"' +
+      (kitchenVendorFilter === "all" ? " selected" : "") +
+      ">Todos</option>" +
+      VENDORS.map(function (v) {
+        return (
+          '<option value="' +
+          esc(v.id) +
+          '"' +
+          (kitchenVendorFilter === v.id ? " selected" : "") +
+          ">" +
+          esc(v.name) +
+          "</option>"
+        );
+      }).join("") +
+      "</select></label>" +
+      '<div class="k-vendor-list">' +
+      (function () {
+        var pages = Math.max(1, Math.ceil(halls.length / KITCHEN_LIST_SIZE));
+        if (kitchenListPage > pages) kitchenListPage = pages;
+        if (kitchenListPage < 1) kitchenListPage = 1;
+        var start = (kitchenListPage - 1) * KITCHEN_LIST_SIZE;
+        var slice = halls.slice(start, start + KITCHEN_LIST_SIZE);
+        var rows = slice
+          .map(function (c) {
+            var vid = vendorOfHall(c.name);
+            return (
+              '<button type="button" class="k-vendor-row" data-open-vendors>' +
+              '<span class="k-vendor-hall">' +
+              esc(c.name) +
+              '</span><span class="k-vendor-now">' +
+              esc(vid ? vendorShort(vid) : "—") +
+              "</span></button>"
+            );
+          })
+          .join("");
+        var pager =
+          halls.length > KITCHEN_LIST_SIZE
+            ? '<div class="k-list-pager">' +
+              '<button type="button" class="page-btn" data-kitchen-list="' +
+              (kitchenListPage - 1) +
+              '" ' +
+              (kitchenListPage <= 1 ? "disabled" : "") +
+              ">Ant</button><span>" +
+              kitchenListPage +
+              " / " +
+              pages +
+              '</span><button type="button" class="page-btn" data-kitchen-list="' +
+              (kitchenListPage + 1) +
+              '" ' +
+              (kitchenListPage >= pages ? "disabled" : "") +
+              ">Sig</button></div>"
+            : "";
+        return rows + pager;
+      })() +
+      "</div></aside>" +
+      '<div class="k-main"><div class="k-board">' +
+      (visible.length
+        ? visible
+            .map(function (c) {
+              var lista = c.count - c.extras;
+              var note = c.count
+                ? c.extras
+                  ? lista + " lista + " + c.extras + " extras"
+                  : lista + " lista"
+                : "Sin envío hoy";
+              var vid = vendorOfHall(c.name);
+              return (
+                '<div class="k-send' +
+                (c.count ? "" : " is-zero") +
+                (c.extras ? " has-extra" : "") +
+                '"><span class="k-send-name">' +
+                esc(c.name) +
+                '</span><span class="k-send-qty">' +
+                c.count +
+                "</span><small>" +
+                esc(note) +
+                "</small>" +
+                (vid ? '<em class="k-vendor-tag">' + esc(vendorName(vid)) + "</em>" : "") +
+                "</div>"
+              );
+            })
+            .join("")
+        : '<p class="empty k-empty">No hay comedores en este proveedor.</p>') +
+      '<div class="k-send k-send-total"><span class="k-send-name">Total' +
+      (kitchenVendorFilter === "all" ? "" : " · " + vendorName(kitchenVendorFilter)) +
+      '</span><span class="k-send-qty">' +
+      visMeals +
       "</span><small>" +
-      stats.regular +
+      visLista +
       " lista + " +
-      stats.extras +
-      " extras</small></div></div></div>"
+      visExtras +
+      " extras</small></div></div></div></div></div>"
     );
   }
 
@@ -2508,27 +3013,87 @@
         return b.time.localeCompare(a.time);
       });
   }
+  var NOTICE_STORE = "qberries.noticeSeen";
+  var NOTICE_TTL_MS = 24 * 60 * 60 * 1000;
+  var noticeSeen = { day: "", at: 0, ids: {} };
+  function noticeKey(r) {
+    return String(
+      (r && r.id) ||
+        [r && r.date, r && r.dni, r && r.time, r && r.supervisor, r && r.sede].join("|")
+    );
+  }
+  function saveNoticeSeen() {
+    try {
+      root.localStorage.setItem(NOTICE_STORE, JSON.stringify(noticeSeen));
+    } catch (err) {}
+  }
+  function clearNoticeSeen() {
+    noticeSeen = { day: TODAY, at: Date.now(), ids: {} };
+    saveNoticeSeen();
+  }
+  function purgeNoticeSeen() {
+    var staleDay = !noticeSeen.day || noticeSeen.day !== TODAY;
+    var staleAge = !noticeSeen.at || Date.now() - Number(noticeSeen.at || 0) > NOTICE_TTL_MS;
+    if (staleDay || staleAge) clearNoticeSeen();
+  }
+  (function loadNoticeSeen() {
+    try {
+      var raw = JSON.parse(root.localStorage.getItem(NOTICE_STORE) || "null");
+      if (raw && typeof raw === "object") {
+        noticeSeen = {
+          day: String(raw.day || ""),
+          at: Number(raw.at) || 0,
+          ids: raw.ids && typeof raw.ids === "object" ? raw.ids : {},
+        };
+      }
+    } catch (err) {
+      noticeSeen = { day: "", at: 0, ids: {} };
+    }
+    purgeNoticeSeen();
+  })();
+  function unseenExtras() {
+    purgeNoticeSeen();
+    return extrasToday().filter(function (r) {
+      return !noticeSeen.ids[noticeKey(r)];
+    });
+  }
+  function markNoticesSeen() {
+    purgeNoticeSeen();
+    extrasToday().forEach(function (r) {
+      noticeSeen.ids[noticeKey(r)] = 1;
+    });
+    noticeSeen.day = TODAY;
+    noticeSeen.at = Date.now();
+    saveNoticeSeen();
+  }
   function paintNotices() {
     try {
     var badge = document.getElementById("notice-badge");
     var list = document.getElementById("notice-list");
     var sub = document.getElementById("notice-sub");
     if (!badge || !list || !sub) return;
+    purgeNoticeSeen();
     var extras = extrasToday();
-    if (extras.length) {
+    var unseen = unseenExtras();
+    if (unseen.length) {
       badge.hidden = false;
-      badge.textContent = extras.length > 99 ? "99+" : String(extras.length);
+      badge.textContent = unseen.length > 99 ? "99+" : String(unseen.length);
     } else {
       badge.hidden = true;
     }
     sub.textContent = extras.length
-      ? extras.length + (extras.length === 1 ? " extra pedida hoy" : " extras pedidas hoy")
+      ? extras.length +
+        (extras.length === 1 ? " extra pedida hoy" : " extras pedidas hoy") +
+        (unseen.length ? " · " + unseen.length + " sin ver" : " · al día")
       : "No hay extras hoy";
     list.innerHTML = extras.length
       ? extras
           .map(function (r) {
+            var unread = !noticeSeen.ids[noticeKey(r)];
             return (
-              '<article class="notice-item"><span class="avatar">' +
+              '<article class="notice-item' +
+              (unread ? " is-new" : "") +
+              '"><span class="avatar">' +
               esc(initials(r.name)) +
               "</span><div><strong>Se ha pedido un extra</strong><small>" +
               esc(r.name) +
@@ -2547,20 +3112,28 @@
       : '<p class="notice-empty">Hoy no se ha pedido ningún extra.</p>';
     } catch (err) {}
   }
-  function closeNotices() {
-    var panel = document.getElementById("notice-panel");
-    var btn = document.getElementById("notice-btn");
-    if (panel) panel.hidden = true;
-    if (btn) btn.setAttribute("aria-expanded", "false");
-  }
   function toggleNotices() {
     var panel = document.getElementById("notice-panel");
     var btn = document.getElementById("notice-btn");
     if (!panel || !btn) return;
     var open = panel.hidden;
+    if (!open) {
+      markNoticesSeen();
+      paintNotices();
+    }
     panel.hidden = !open;
     btn.setAttribute("aria-expanded", open ? "true" : "false");
     if (open) paintNotices();
+  }
+  function closeNotices() {
+    var panel = document.getElementById("notice-panel");
+    var btn = document.getElementById("notice-btn");
+    if (panel && !panel.hidden) {
+      markNoticesSeen();
+      paintNotices();
+    }
+    if (panel) panel.hidden = true;
+    if (btn) btn.setAttribute("aria-expanded", "false");
   }
 
   function paint() {
@@ -2663,6 +3236,71 @@
     var teamClose = document.getElementById("team-close");
     var teamSearch = document.getElementById("team-q");
     if (teamClose) teamClose.addEventListener("click", closeTeam);
+    var vendorClose = document.getElementById("vendor-close");
+    var vendorModal = document.getElementById("vendor-modal");
+    if (vendorClose) vendorClose.addEventListener("click", closeVendorModal);
+    if (vendorModal) {
+      vendorModal.addEventListener("click", function (e) {
+        if (e.target === vendorModal) closeVendorModal();
+      });
+      vendorModal.addEventListener("dragstart", function (e) {
+        var tile = e.target.closest && e.target.closest("[data-vendor-tile]");
+        if (!tile || !e.dataTransfer) return;
+        vendorPickHall = tile.getAttribute("data-vendor-tile") || "";
+        e.dataTransfer.setData("text/plain", vendorPickHall);
+        e.dataTransfer.effectAllowed = "move";
+        tile.classList.add("is-picked");
+      });
+      vendorModal.addEventListener("dragend", function () {
+        vendorModal.querySelectorAll(".vendor-bin.is-over").forEach(function (el) {
+          el.classList.remove("is-over");
+        });
+      });
+      vendorModal.addEventListener("dragover", function (e) {
+        var bin = e.target.closest && e.target.closest("[data-drop]");
+        if (!bin) return;
+        e.preventDefault();
+        vendorModal.querySelectorAll(".vendor-bin.is-over").forEach(function (el) {
+          el.classList.remove("is-over");
+        });
+        bin.classList.add("is-over");
+      });
+      vendorModal.addEventListener("drop", function (e) {
+        var bin = e.target.closest && e.target.closest("[data-drop]");
+        if (!bin) return;
+        e.preventDefault();
+        var hall = (e.dataTransfer && e.dataTransfer.getData("text/plain")) || vendorPickHall;
+        var dest = bin.getAttribute("data-drop") || "";
+        vendorPickHall = "";
+        bin.classList.remove("is-over");
+        if (hall) setHallVendor(hall, dest === "none" ? "" : dest, { toggle: false });
+      });
+    }
+    var distClose = document.getElementById("dist-close");
+    var distModal = document.getElementById("dist-modal");
+    var distForm = document.getElementById("dist-form");
+    if (distClose) distClose.addEventListener("click", closeDistModal);
+    if (distModal) {
+      distModal.addEventListener("click", function (e) {
+        if (e.target === distModal) closeDistModal();
+      });
+    }
+    if (distForm) {
+      distForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var input = document.getElementById("dist-name");
+        var result = addDistributor(input ? input.value : "");
+        if (!result.ok) {
+          askTop({ title: "No se pudo registrar", text: result.error, hideCancel: true, ok: "Entendido" });
+          return;
+        }
+        if (input) input.value = "";
+        paintDistList();
+        paintVendorBoard();
+        paint();
+        if (input) input.focus();
+      });
+    }
     var teamSearchTimer = 0;
     if (teamSearch) {
       teamSearch.addEventListener("input", function () {
@@ -2816,7 +3454,80 @@
         reservaDniTimer = root.setTimeout(filterReservasTable, 220);
       }
     });
+    document.addEventListener("change", function (e) {
+      if (e.target && e.target.id === "kitchen-vendor-filter") {
+        kitchenVendorFilter = e.target.value || "all";
+        kitchenListPage = 1;
+        closeKitchenPicks();
+        paint();
+      }
+    });
     document.addEventListener("click", function (e) {
+      var kOpen = e.target.closest && e.target.closest("[data-open-vendors]");
+      if (kOpen) {
+        e.preventDefault();
+        openVendorModal();
+        return;
+      }
+      var kDist = e.target.closest && e.target.closest("[data-open-dist]");
+      if (kDist) {
+        e.preventDefault();
+        openDistModal();
+        return;
+      }
+      var distDel = e.target.closest && e.target.closest("[data-dist-del]");
+      if (distDel) {
+        e.preventDefault();
+        var delId = distDel.getAttribute("data-dist-del") || "";
+        var delVendor = findVendor(delId);
+        if (!delVendor) return;
+        askTop({
+          title: "Eliminar distribuidora",
+          text: "¿Quitar “" + delVendor.name + "”? Los comedores asignados quedarán sin proveedor.",
+          ok: "Eliminar",
+          cancel: "Cancelar",
+        }).then(function (ok) {
+          if (!ok) return;
+          removeDistributor(delId);
+          paintDistList();
+          paintVendorBoard();
+          paint();
+        });
+        return;
+      }
+      var kListPage = e.target.closest && e.target.closest("[data-kitchen-list]");
+      if (kListPage && !kListPage.disabled) {
+        e.preventDefault();
+        var nextList = Number(kListPage.getAttribute("data-kitchen-list"));
+        if (nextList >= 1) {
+          kitchenListPage = nextList;
+          paint();
+        }
+        return;
+      }
+      var kPickBtn = e.target.closest && e.target.closest("[data-kitchen-pick]");
+      if (kPickBtn) {
+        e.preventDefault();
+        openVendorModal();
+        return;
+      }
+      var vTile = e.target.closest && e.target.closest("[data-vendor-tile]");
+      if (vTile) {
+        e.preventDefault();
+        vendorPickHall = vTile.getAttribute("data-vendor-tile") || "";
+        paintVendorBoard();
+        return;
+      }
+      var vDrop = e.target.closest && e.target.closest("[data-drop]");
+      if (vDrop && vendorPickHall) {
+        e.preventDefault();
+        var dest = vDrop.getAttribute("data-drop") || "";
+        var hall = vendorPickHall;
+        vendorPickHall = "";
+        setHallVendor(hall, dest === "none" ? "" : dest, { toggle: false });
+        return;
+      }
+      if (!e.target.closest || !e.target.closest(".k-vendor-pick")) closeKitchenPicks();
       if (e.target.closest && e.target.closest("#reserva-sup-btn")) {
         e.preventDefault();
         toggleReservaPick();
@@ -2838,14 +3549,10 @@
         }
         return;
       }
-      if (e.target.closest("[data-export='excel']")) {
+      if (e.target.closest("[data-export='excel']") || e.target.closest("[data-export='pdf']")) {
         e.preventDefault();
-        exportVerifyExcel();
-        return;
-      }
-      if (e.target.closest("[data-export='pdf']")) {
-        e.preventDefault();
-        exportVerifyPdf();
+        var btn = e.target.closest("[data-export]");
+        exportByScope(btn.getAttribute("data-export"), btn.getAttribute("data-scope") || "verify");
         return;
       }
       var teamBtn = e.target.closest("[data-open-team]");
@@ -2880,9 +3587,24 @@
         if (!refreshBusy) hideSync();
         return;
       }
+      var vendorBox = document.getElementById("vendor-modal");
+      if (vendorBox && vendorBox.classList.contains("open")) {
+        closeVendorModal();
+        return;
+      }
+      var distBox = document.getElementById("dist-modal");
+      if (distBox && distBox.classList.contains("open")) {
+        closeDistModal();
+        return;
+      }
       var openPick = document.querySelector("#reserva-sup-pick.open");
       if (openPick) {
         closeReservaPick();
+        return;
+      }
+      var openKitchen = document.querySelector(".k-vendor-pick.open");
+      if (openKitchen) {
+        closeKitchenPicks();
         return;
       }
       closeTeam();
@@ -3001,9 +3723,12 @@
     window.addEventListener("hashchange", function () {
       closeMenu();
       closeTeam();
+      closeVendorModal();
+      closeDistModal();
       closeNotices();
       closeSwal(false);
       closeReservaPick();
+      closeKitchenPicks();
       paint();
     });
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);

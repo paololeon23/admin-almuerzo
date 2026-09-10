@@ -2,7 +2,7 @@
 <html lang="es">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Qberries Lunch Admin</title>
     <link rel="icon" href="favicon.ico" sizes="any" />
     <link rel="icon" type="image/png" href="icon-192.png" sizes="192x192" />
@@ -65,6 +65,39 @@
         <p class="muted modal-count" id="team-count"></p>
         <div id="team-list" class="team-list"></div>
         <div id="team-pager" class="team-pager" hidden></div>
+      </div>
+    </div>
+    <div id="vendor-modal" class="modal vendor-modal">
+      <div class="modal-card vendor-card" role="dialog" aria-modal="true" aria-labelledby="vendor-title">
+        <header class="modal-head">
+          <div>
+            <p class="muted">Jala el cuadrado y suéltalo en el proveedor</p>
+            <h2 id="vendor-title">Asignar comedores</h2>
+          </div>
+          <button type="button" id="vendor-close" class="icon-btn" aria-label="Cerrar">×</button>
+        </header>
+        <p class="vendor-hint" id="vendor-hint">Arrastra cada comedor al recuadro. En celular, tócalo y luego toca el proveedor.</p>
+        <div class="vendor-board" id="vendor-board"></div>
+      </div>
+    </div>
+    <div id="dist-modal" class="modal dist-modal">
+      <div class="modal-card dist-card" role="dialog" aria-modal="true" aria-labelledby="dist-title">
+        <header class="modal-head">
+          <div>
+            <p class="muted">Solo en este navegador por ahora</p>
+            <h2 id="dist-title">Distribuidoras</h2>
+          </div>
+          <button type="button" id="dist-close" class="icon-btn" aria-label="Cerrar">×</button>
+        </header>
+        <form id="dist-form" class="dist-form" autocomplete="off">
+          <label class="dist-field">
+            <span>Nombre</span>
+            <input id="dist-name" name="name" type="text" maxlength="60" placeholder="Ej. Refrigerios del Norte" required />
+          </label>
+          <button type="submit" class="k-open-vendors dist-save">Registrar</button>
+        </form>
+        <p class="vendor-hint">Las que ya existen se pueden eliminar. Queda guardado en local.</p>
+        <div id="dist-list" class="dist-list"></div>
       </div>
     </div>
     <aside id="sidebar" class="sidebar">
