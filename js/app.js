@@ -1232,7 +1232,8 @@
     var supervisor = String(raw.supervisor || raw.supervisor_name || "").trim();
     var sede = String(raw.sede || raw.comedor || raw.hall || "").trim() || sedeOfSupervisor(supervisor);
     var status = normalizeStatus(raw.status || raw.estado);
-    var extra = truthyExtra(raw.extra) || fold(raw.tipo || raw.type) === "extra";
+    var tipo = fold(raw.tipo || raw.type);
+    var extra = tipo === "normal" || tipo === "lista" ? false : (tipo === "extra" || truthyExtra(raw.extra));
     if (status === "cancelled") extra = false;
     var date = String(raw.date || raw.fecha || "").slice(0, 10);
     if (!date) return null;
@@ -1486,6 +1487,20 @@
       .sort()
       .join("|");
   }
+  function reconcileOrphanExtras(rows) {
+    var lista = {};
+    (rows || []).forEach(function (r) {
+      if (!r || r.status === "cancelled" || r.extra) return;
+      var key = (r.date || "") + "|" + String(r.supervisor || "").trim();
+      lista[key] = (lista[key] || 0) + 1;
+    });
+    return (rows || []).map(function (r) {
+      if (!r || r.status === "cancelled" || !r.extra) return r;
+      var key = (r.date || "") + "|" + String(r.supervisor || "").trim();
+      if (lista[key]) return r;
+      return Object.assign({}, r, { extra: false });
+    });
+  }
   function applyRows(rows, opts) {
     opts = opts || {};
     if (!Array.isArray(rows) && rows != null) return false;
@@ -1494,6 +1509,7 @@
       var r = normalizeReservation(raw) || (raw && raw.date ? raw : null);
       if (r) next.push(r);
     });
+    next = reconcileOrphanExtras(next);
     next = overlayPending(next);
     if (!next.length && ALL.length && !opts.allowEmpty) return false;
     var nextStamp = rowsStamp(next);
@@ -3097,12 +3113,12 @@
               esc(initials(r.name)) +
               "</span><div><strong>Se ha pedido un extra</strong><small>" +
               esc(r.name) +
-              " · DNI " +
+              '</small><small class="notice-dni">DNI ' +
               esc(r.dni) +
               "</small><small>" +
               esc(r.supervisor) +
-              " · " +
-              esc(String(r.sede || "").replace("Comedor ", "")) +
+              '</small><small class="notice-hall">' +
+              esc(r.sede || "") +
               '</small></div><div class="notice-time">' +
               esc(r.time) +
               "</div></article>"
