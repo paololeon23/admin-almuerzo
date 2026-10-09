@@ -1,5 +1,5 @@
-/* Qberries Lunch Admin · shell cache v3. No cachea la API. */
-var CACHE = "qberries-shell-v3";
+/* Qberries Lunch Admin · shell cache v13. No cachea la API. */
+var CACHE = "qberries-shell-v13";
 var SHELL = [
   "./",
   "./index.html",

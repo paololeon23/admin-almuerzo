@@ -100,6 +100,20 @@
         <div id="dist-list" class="dist-list"></div>
       </div>
     </div>
+    <div id="moves-modal" class="modal">
+      <div class="modal-card moves-card" role="dialog" aria-modal="true" aria-labelledby="moves-title">
+        <header class="modal-head">
+          <div>
+            <p class="muted">Cada hora, de las últimas 24. Después se borra solo.</p>
+            <h2 id="moves-title">Movimientos</h2>
+          </div>
+          <button type="button" id="moves-close" class="icon-btn" aria-label="Cerrar">×</button>
+        </header>
+        <p class="modal-count" id="moves-count"></p>
+        <div id="moves-list" class="moves-list"></div>
+        <div id="moves-pager" class="team-pager" hidden></div>
+      </div>
+    </div>
     <aside id="sidebar" class="sidebar">
       <a class="brand" href="#/dashboard">
         <img id="logo" src="logo-qberries.png" alt="Qberries" width="140" height="42" decoding="async" />
@@ -116,6 +130,16 @@
             <small>Administración</small>
           </div>
         </div>
+      </div>
+      <div class="side-moves">
+        <div>
+          <strong>Movimientos</strong>
+          <small>Registro · 24 h</small>
+        </div>
+        <button type="button" id="moves-eye" class="side-eye" aria-label="Ver movimientos por hora">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          <span id="moves-badge" class="side-eye-count" hidden>0</span>
+        </button>
       </div>
     </aside>
     <div class="shell">

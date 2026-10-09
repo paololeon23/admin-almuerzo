@@ -181,8 +181,10 @@
             .map(function (col, ci) {
               var ref = colLetter(ci + 1) + n;
               var val = r[col.key];
-              if (col.num) return cellNum(ref, val, zebra ? 7 : 5);
-              return cellInline(ref, val == null ? "" : String(val), zebra ? 6 : 4);
+              var numeric = col.num || (typeof val === "number" && isFinite(val));
+              var center = numeric || col.align === "center";
+              if (numeric) return cellNum(ref, val, zebra ? 7 : 5);
+              return cellInline(ref, val == null ? "" : String(val), center ? (zebra ? 7 : 5) : zebra ? 6 : 4);
             })
             .join("") +
           "</row>"
@@ -197,8 +199,10 @@
           .map(function (col, ci) {
             var ref = colLetter(ci + 1) + last;
             var val = foot[col.key];
-            if (col.num) return cellNum(ref, val == null ? 0 : val, 9);
-            return cellInline(ref, val == null ? "" : String(val), 8);
+            var numeric = col.num || (typeof val === "number" && isFinite(val));
+            var center = numeric || col.align === "center";
+            if (numeric) return cellNum(ref, val == null ? 0 : val, 9);
+            return cellInline(ref, val == null ? "" : String(val), center ? 9 : 8);
           })
           .join("") +
         "</row>"
@@ -377,8 +381,11 @@
         if (i % 2 === 1) s.push("0.918 0.965 0.906 rg " + margin + " " + y + " " + (W - margin * 2) + " " + rowH + " re f");
         s.push("0.106 0.122 0.141 rg");
         cols.forEach(function (col) {
-          var text = clip(r[col.key], col.clip);
-          var tx = col.align === "center" ? col.x + col.w / 2 - String(text).length * 3 : col.x + 8;
+          var raw = r[col.key];
+          var text = clip(raw, col.clip);
+          var numeric = col.num || (typeof raw === "number" && isFinite(raw));
+          var center = numeric || col.align === "center";
+          var tx = center ? col.x + col.w / 2 - String(text).length * 3 : col.x + 8;
           s.push("BT /F1 9 Tf " + tx + " " + (y + 7) + " Td (" + pdfEscape(text) + ") Tj ET");
         });
         y -= rowH;
@@ -387,8 +394,11 @@
         s.push("0.918 0.965 0.906 rg " + margin + " " + y + " " + (W - margin * 2) + " " + rowH + " re f");
         s.push("0.247 0.529 0.212 rg");
         cols.forEach(function (col) {
-          var text = clip(foot[col.key], col.clip);
-          var tx = col.align === "center" ? col.x + col.w / 2 - String(text).length * 3 : col.x + 8;
+          var raw = foot[col.key];
+          var text = clip(raw, col.clip);
+          var numeric = col.num || (typeof raw === "number" && isFinite(raw));
+          var center = numeric || col.align === "center";
+          var tx = center ? col.x + col.w / 2 - String(text).length * 3 : col.x + 8;
           s.push("BT /F2 9 Tf " + tx + " " + (y + 7) + " Td (" + pdfEscape(text) + ") Tj ET");
         });
         y -= 28;

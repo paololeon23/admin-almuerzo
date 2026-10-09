@@ -298,6 +298,8 @@
     }
     saveKitchenVendors();
     paintVendorBoard();
+    if (kitchenVendors[hall]) logMove("Asignó " + hall + " a " + vendorName(kitchenVendors[hall]) + ".");
+    else logMove("Quitó el proveedor de " + hall + ".");
     if (!opts.silent) paint();
   }
   function addDistributor(name) {
@@ -319,11 +321,13 @@
     }
     VENDORS.push({ id: id, name: name, short: vendorShortFromName(name) });
     saveVendorCatalog();
+    logMove("Registró la distribuidora " + name + ".");
     return { ok: true, id: id };
   }
   function removeDistributor(id) {
     id = String(id || "").trim();
-    if (!findVendor(id)) return false;
+    var vendor = findVendor(id);
+    if (!vendor) return false;
     VENDORS = VENDORS.filter(function (v) {
       return v.id !== id;
     });
@@ -333,6 +337,7 @@
     if (kitchenVendorFilter === id) kitchenVendorFilter = "all";
     saveVendorCatalog();
     saveKitchenVendors();
+    logMove("Eliminó la distribuidora " + vendor.name + ".");
     return true;
   }
   function paintDistList() {
@@ -945,6 +950,12 @@
     }
     function toastAdded(flag) {
       toast(flag ? "Agregado como extra." : "Agregado a la lista de hoy.");
+      logMove(
+        (flag ? "Agregó como extra a " : "Agregó a la lista a ") +
+          (worker.name || worker.dni) +
+          (supervisor ? " · " + supervisor : "") +
+          "."
+      );
     }
     function finishLocal(apiRow) {
       applyLocal(apiRow);
@@ -999,6 +1010,15 @@
     if (teamBusy || !dni) return Promise.resolve(false);
     teamBusy = true;
     function finishLocal() {
+      var person = dni;
+      ALL.some(function (r) {
+        if (r.date === TODAY && sameDni(r.dni, dni) && r.status !== "cancelled" && belongsToSupervisor(r, supervisor)) {
+          person = r.name || dni;
+          return true;
+        }
+        return false;
+      });
+      logMove("Eliminó a " + person + " de la lista" + (supervisor ? " de " + supervisor : "") + ".");
       forgetPendingMeal(dni);
       var next = ALL.map(function (r) {
         if (r.date === TODAY && sameDni(r.dni, dni) && r.status !== "cancelled" && belongsToSupervisor(r, supervisor)) {
@@ -1186,7 +1206,10 @@
         })
         .then(function (data) {
           if (data && data.error === "sin_cambios") toast("Ese comedor y fundo ya estaban guardados.");
-          else toast("Comedor y fundo actualizados.");
+          else {
+            toast("Comedor y fundo actualizados.");
+            logMove("Cambió el destino de " + supervisor + " a " + [sede, fundo].filter(Boolean).join(" · ") + ".");
+          }
           return true;
         })
         .catch(function (err) {
@@ -1206,6 +1229,7 @@
     rememberTeamDest(supervisor, sede, fundo);
     fillTeamDest(sede, fundo);
     toast("Comedor y fundo actualizados.");
+    logMove("Cambió el destino de " + supervisor + " a " + [sede, fundo].filter(Boolean).join(" · ") + ".");
     done();
     return Promise.resolve(true);
   }
@@ -1346,6 +1370,9 @@
       var s = bumpSup(supMap, r.supervisor);
       if (r.supervisor_id) s.supervisor_id = r.supervisor_id;
       if (r.fundo) s.fundo = r.fundo;
+      var sentAt = String(r.time || "").trim();
+      if (sentAt.length === 5) sentAt += ":00";
+      if (sentAt && (!s.lastTime || sentAt > s.lastTime)) s.lastTime = sentAt;
       s.meals += 1;
       if (r.extra) s.extras += 1;
       else s.regular += 1;
@@ -1786,6 +1813,7 @@
         stats.regular + " en lista  ·  " + extras + (extras === 1 ? " extra" : " extras") + "  ·  " + stats.prepared + " total"
       );
       toast(dataSource === "live" ? "Datos actualizados." : "Se muestran los datos guardados.");
+      logMove("Actualizó los datos del día.");
       root.clearTimeout(syncTimer);
       syncTimer = root.setTimeout(hideSync, 1600);
     }
@@ -2313,18 +2341,56 @@
       return tr.style.display !== "none";
     });
   }
+  function fundoMark(raw) {
+    var text = String(raw || "").replace(/\s+/g, " ").trim();
+    var rest = text.replace(/^licapa\s+/i, "").trim();
+    if (!rest) return "";
+    if (/^[ivxlcdm]+$/i.test(rest)) return rest.toUpperCase();
+    var n = parseInt(rest, 10);
+    var romans = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
+    if (String(n) === rest && n > 0 && n < romans.length) return romans[n];
+    return rest;
+  }
+  function fundoRank(mark) {
+    var order = { I: 1, II: 2, III: 3, IV: 4, V: 5, VI: 6, VII: 7, VIII: 8, IX: 9, X: 10 };
+    return order[String(mark || "").toUpperCase()] || 100;
+  }
+  function splitComedorLabel(label) {
+    var raw = String(label || "").trim();
+    var bits = raw.split(/\s*[·•]\s*/);
+    var hall = (bits[0] || "").trim();
+    var fundo = fundoMark(bits.slice(1).join(" · "));
+    var numbered = hall.match(/^comedor\s+(\d+)$/i);
+    if (numbered) {
+      return { comedor: Number(numbered[1]), fundo: fundo, rank: Number(numbered[1]), nameKey: "" };
+    }
+    return { comedor: hall, fundo: fundo, rank: 100000, nameKey: fold(hall) };
+  }
   function verifyExportRows() {
-    return visibleVerifyRows().map(function (tr) {
+    var rows = visibleVerifyRows().map(function (tr) {
       var cells = tr.querySelectorAll("td");
       var name = (tr.querySelector(".who span:not(.avatar)") || {}).textContent || "";
+      var parts = splitComedorLabel((cells[3] && cells[3].textContent.trim()) || "");
       return {
         supervisor: name.trim(),
         comidas: (cells[1] && cells[1].textContent.trim()) || "0",
         extras: tr.querySelector("[data-extras]") ? tr.querySelector("[data-extras]").getAttribute("data-extras") : "0",
-        comedor: (cells[3] && cells[3].textContent.trim()) || "",
+        comedor: parts.comedor,
+        fundo: parts.fundo,
         total: (cells[4] && cells[4].textContent.trim()) || "0",
+        _rank: parts.rank,
+        _nameKey: parts.nameKey,
+        _fundoRank: fundoRank(parts.fundo),
       };
     });
+    rows.sort(function (a, b) {
+      if (a._rank !== b._rank) return a._rank - b._rank;
+      var byName = String(a._nameKey).localeCompare(String(b._nameKey), "es");
+      if (byName) return byName;
+      if (a._fundoRank !== b._fundoRank) return a._fundoRank - b._fundoRank;
+      return (Number(b.total) || 0) - (Number(a.total) || 0) || String(a.supervisor).localeCompare(String(b.supervisor), "es");
+    });
+    return rows;
   }
   function downloadFile(name, content, mime) {
     var blob = content instanceof Blob ? content : new Blob([content], { type: mime || "application/octet-stream" });
@@ -2348,7 +2414,8 @@
         { key: "supervisor", label: "Supervisor", align: "left", width: 38 },
         { key: "comidas", label: "Lista", align: "center", width: 12, num: true },
         { key: "extras", label: "Extras", align: "center", width: 12, num: true },
-        { key: "comedor", label: "Comedor", align: "left", width: 28 },
+        { key: "comedor", label: "Comedor", align: "center", width: 22 },
+        { key: "fundo", label: "Fundo", align: "center", width: 12 },
         { key: "total", label: "Total", align: "center", width: 12, num: true },
       ],
       footer: (function () {
@@ -2361,7 +2428,7 @@
           comidas += Number(r.comidas) || 0;
           extras += Number(r.extras) || 0;
           total += Number(r.total) || 0;
-          var hall = String(r.comedor || "").split("·")[0].trim();
+          var hall = r.comedor == null ? "" : String(r.comedor).trim();
           if (hall) comedores[hall] = true;
         });
         return {
@@ -2369,6 +2436,7 @@
           comidas: comidas,
           extras: extras,
           comedor: Object.keys(comedores).length + " comedores",
+          fundo: "",
           total: total,
         };
       })(),
@@ -2472,25 +2540,47 @@
         : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     downloadFile(fileBase + "_" + TODAY + ext, blob, mime);
     toast(kind === "pdf" ? "PDF descargado." : "Excel descargado.");
+    logMove("Descargó el " + (kind === "pdf" ? "PDF" : "Excel") + " de " + exportOrigin(meta && meta.exportScope) + ".");
     root.setTimeout(function () {
       exportBusy = false;
     }, 400);
   }
+  function exportOrigin(scope) {
+    var route = parseRoute(location.hash);
+    var tabs = {
+      "/dashboard": "Dashboard",
+      "/supervisores": "Supervisores",
+      "/comedores": "Comedores",
+      "/reservas": "Reservas",
+      "/cocina": "Cocina",
+    };
+    var tab = tabs[route] || "";
+    var file = scope === "comedores" ? "Comedores" : scope === "reservas" ? "Reservas" : "Supervisores";
+    if (tab && fold(tab) !== fold(file)) return file + ", pestaña " + tab;
+    return file;
+  }
+  function withExportScope(meta, scope) {
+    var next = {};
+    var key;
+    for (key in meta) if (Object.prototype.hasOwnProperty.call(meta, key)) next[key] = meta[key];
+    next.exportScope = scope || "verify";
+    return next;
+  }
   function exportVerifyExcel() {
-    runExport("excel", verifyExportRows(), exportMeta(), "Qberries_Verificacion");
+    runExport("excel", verifyExportRows(), withExportScope(exportMeta(), "verify"), "Qberries_Verificacion");
   }
   function exportVerifyPdf() {
-    runExport("pdf", verifyExportRows(), exportMeta(), "Qberries_Verificacion");
+    runExport("pdf", verifyExportRows(), withExportScope(exportMeta(), "verify"), "Qberries_Verificacion");
   }
   function exportByScope(kind, scope) {
     if (scope === "comedores") {
       var cRows = comedorExportRows();
-      runExport(kind, cRows, comedorExportMeta(cRows), "Qberries_Comedores");
+      runExport(kind, cRows, withExportScope(comedorExportMeta(cRows), "comedores"), "Qberries_Comedores");
       return;
     }
     if (scope === "reservas") {
       var rRows = reservaExportRows();
-      runExport(kind, rRows, reservaExportMeta(rRows), "Qberries_Reservas");
+      runExport(kind, rRows, withExportScope(reservaExportMeta(rRows), "reservas"), "Qberries_Reservas");
       return;
     }
     if (kind === "pdf") exportVerifyPdf();
@@ -2522,6 +2612,17 @@
     }
   }
 
+  function cardsByArrival(list) {
+    return (list || []).slice().sort(function (a, b) {
+      var ta = a.lastTime || "";
+      var tb = b.lastTime || "";
+      if (!ta && !tb) return b.meals - a.meals || a.supervisor.localeCompare(b.supervisor, "es");
+      if (!ta) return 1;
+      if (!tb) return -1;
+      if (ta !== tb) return tb.localeCompare(ta);
+      return b.meals - a.meals || a.supervisor.localeCompare(b.supervisor, "es");
+    });
+  }
   function renderDashboard(q) {
     var stats = totals(ALL, TODAY);
     var sups = filterSupervisors(bySupervisor(ALL, TODAY), q);
@@ -2571,8 +2672,7 @@
       '<div class="full"><div class="section-head"><h2>Comidas por supervisor</h2><a href="#/supervisores" class="link">Ver todos</a></div>' +
       '<div class="sup-grid">' +
       (sups.length
-        ? sups
-            .slice(0, 8)
+        ? cardsByArrival(sups).slice(0, 8)
             .map(function (s) {
               var destText = destLabel(s);
               return (
@@ -3152,6 +3252,138 @@
     if (btn) btn.setAttribute("aria-expanded", "false");
   }
 
+  var MOVE_STORE = "qberries.moves";
+  var MOVE_TTL = 24 * 60 * 60 * 1000;
+  var MOVE_PAGE_SIZE = 10;
+  var movesPage = 1;
+  function writeMoves(list) {
+    try {
+      root.localStorage.setItem(MOVE_STORE, JSON.stringify(list));
+    } catch (err) {}
+  }
+  function readMoves() {
+    var raw = [];
+    try {
+      raw = JSON.parse(root.localStorage.getItem(MOVE_STORE) || "[]");
+    } catch (err) {
+      raw = [];
+    }
+    if (!Array.isArray(raw)) raw = [];
+    var cut = Date.now() - MOVE_TTL;
+    var next = raw.filter(function (m) {
+      return m && typeof m.at === "number" && m.at >= cut && m.text;
+    });
+    if (next.length !== raw.length) writeMoves(next);
+    return next;
+  }
+  function moveHourTitle(m) {
+    var today = todayKey();
+    var when = m.day === today ? "Hoy" : m.day === addDays(today, -1) ? "Ayer" : "";
+    if (!when && m.day) {
+      var p = String(m.day).split("-");
+      var months = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+      if (p.length === 3) when = Number(p[2]) + " " + (months[Number(p[1]) - 1] || "");
+    }
+    return (when || "Día") + " · " + (m.hour || "");
+  }
+  function logMove(text) {
+    text = String(text || "").replace(/\s+/g, " ").trim();
+    if (!text) return;
+    try {
+      var p = limaParts();
+      var list = readMoves();
+      list.unshift({
+        at: Date.now(),
+        time: pad2(p.hour) + ":" + pad2(p.minute),
+        hour: pad2(p.hour) + ":00",
+        day: p.year + "-" + p.month + "-" + p.day,
+        text: text,
+      });
+      if (list.length > 400) list.length = 400;
+      writeMoves(list);
+      movesPage = 1;
+      paintMoveBadge();
+      if (document.getElementById("moves-modal") && document.getElementById("moves-modal").classList.contains("open")) paintMoves();
+    } catch (err) {}
+  }
+  function paintMoveBadge() {
+    var badge = document.getElementById("moves-badge");
+    if (!badge) return;
+    var n = readMoves().length;
+    badge.hidden = !n;
+    badge.textContent = n > 99 ? "99+" : String(n);
+  }
+  function paintMoves() {
+    var listEl = document.getElementById("moves-list");
+    var countEl = document.getElementById("moves-count");
+    var pager = document.getElementById("moves-pager");
+    if (!listEl || !pager) return;
+    var list = readMoves();
+    var pages = Math.max(1, Math.ceil(list.length / MOVE_PAGE_SIZE));
+    if (movesPage > pages) movesPage = pages;
+    if (movesPage < 1) movesPage = 1;
+    var start = (movesPage - 1) * MOVE_PAGE_SIZE;
+    var slice = list.slice(start, start + MOVE_PAGE_SIZE);
+    if (countEl) {
+      countEl.textContent = list.length
+        ? list.length + (list.length === 1 ? " movimiento" : " movimientos") + " en 24 horas"
+        : "Sin movimientos en las últimas 24 horas";
+    }
+    if (!slice.length) {
+      listEl.innerHTML = '<p class="moves-empty">Cuando agreguen, quiten o cambien algo en el sistema, queda anotado aquí con su hora.</p>';
+    } else {
+      var html = "";
+      var lastKey = "";
+      slice.forEach(function (m) {
+        var key = (m.day || "") + "|" + (m.hour || "");
+        if (key !== lastKey) {
+          lastKey = key;
+          html += '<p class="move-hour">' + esc(moveHourTitle(m)) + "</p>";
+        }
+        html += '<article class="move-row"><time>' + esc(m.time || "") + "</time><p>" + esc(m.text) + "</p></article>";
+      });
+      listEl.innerHTML = html;
+    }
+    if (list.length <= MOVE_PAGE_SIZE) {
+      pager.hidden = true;
+      pager.innerHTML = "";
+      return;
+    }
+    pager.hidden = false;
+    var from = start + 1;
+    var to = Math.min(start + MOVE_PAGE_SIZE, list.length);
+    pager.innerHTML =
+      '<button type="button" class="page-btn" data-moves-page="' +
+      (movesPage - 1) +
+      '" ' +
+      (movesPage <= 1 ? "disabled" : "") +
+      ">Anterior</button><span>Mostrando " +
+      from +
+      "–" +
+      to +
+      " de " +
+      list.length +
+      '</span><button type="button" class="page-btn" data-moves-page="' +
+      (movesPage + 1) +
+      '" ' +
+      (movesPage >= pages ? "disabled" : "") +
+      ">Siguiente</button>";
+  }
+  function openMoves() {
+    var modal = document.getElementById("moves-modal");
+    if (!modal) return;
+    movesPage = 1;
+    paintMoves();
+    modal.classList.add("open");
+    document.body.style.overflow = "hidden";
+    closeMenu();
+  }
+  function closeMoves() {
+    var modal = document.getElementById("moves-modal");
+    if (modal) modal.classList.remove("open");
+    document.body.style.overflow = "";
+  }
+
   function paint() {
     try {
       var nav = document.getElementById("nav");
@@ -3248,6 +3480,35 @@
         e.stopPropagation();
       });
     }
+    var movesEye = document.getElementById("moves-eye");
+    var movesModal = document.getElementById("moves-modal");
+    var movesClose = document.getElementById("moves-close");
+    if (movesEye) {
+      movesEye.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openMoves();
+      });
+    }
+    if (movesClose) movesClose.addEventListener("click", closeMoves);
+    if (movesModal) {
+      movesModal.addEventListener("click", function (e) {
+        if (e.target === movesModal) closeMoves();
+        var pageBtn = e.target.closest && e.target.closest("[data-moves-page]");
+        if (pageBtn && !pageBtn.disabled) {
+          var nextMove = Number(pageBtn.getAttribute("data-moves-page"));
+          if (nextMove >= 1) {
+            movesPage = nextMove;
+            paintMoves();
+          }
+        }
+      });
+    }
+    paintMoveBadge();
+    root.setInterval(function () {
+      paintMoveBadge();
+      if (movesModal && movesModal.classList.contains("open")) paintMoves();
+    }, 60000);
     var teamModal = document.getElementById("team-modal");
     var teamClose = document.getElementById("team-close");
     var teamSearch = document.getElementById("team-q");
