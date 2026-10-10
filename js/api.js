@@ -199,6 +199,39 @@
     }
     return data;
   }
+  function loginRh(password) {
+    var url = String((cfg().apiUrl || "").trim());
+    if (!url) return Promise.reject({ status: 0, message: "Falta la URL de la API." });
+    var ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var timer = root.setTimeout(function () {
+      if (ctrl) ctrl.abort();
+    }, 25000);
+    return fetch(url, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "login", password: String(password || "") }),
+      cache: "no-store",
+      redirect: "follow",
+      signal: ctrl ? ctrl.signal : undefined,
+    })
+      .then(function (res) {
+        return res.text().then(function (t) {
+          var data = null;
+          try {
+            data = t ? JSON.parse(t) : null;
+          } catch (err) {}
+          if (!res.ok) throw { status: res.status, message: friendlyStatus(res.status), data: data };
+          return data;
+        });
+      })
+      .catch(function (err) {
+        if (err && err.status) throw err;
+        throw { status: 0, message: friendlyError(err), offline: !online() };
+      })
+      .finally(function () {
+        root.clearTimeout(timer);
+      });
+  }
   function getReservations(opts) {
     var url = String((cfg().apiUrl || "").trim());
     return request(Object.assign({ method: "GET", url: url }, opts || {})).then(function (data) {
@@ -309,6 +342,7 @@
     del: function (path, opts) {
       return request(Object.assign({}, opts, { method: "DELETE", url: joinUrl(cfg().apiUrl, path), fresh: true, retry: false }));
     },
+    loginRh: loginRh,
     getReservations: getReservations,
     addReserva: addReserva,
     quitarReserva: quitarReserva,

@@ -1251,6 +1251,11 @@
     if (s === "pending" || s === "pendiente") return "pending";
     return "confirmed";
   }
+  function mealCopies(row) {
+    var n = Number(row && (row.menus != null ? row.menus : row.cantidad != null ? row.cantidad : row.comidas));
+    if (n >= 2) return 2;
+    return 1;
+  }
   function normalizeReservation(raw) {
     if (!raw || typeof raw !== "object") return null;
     var supervisor = String(raw.supervisor || raw.supervisor_name || "").trim();
@@ -1292,6 +1297,7 @@
       fundo: String(raw.fundo || raw.etapa || "").trim(),
       extra: extra,
       status: status,
+      menus: mealCopies(raw),
     };
   }
   function generate(now) {
@@ -1354,8 +1360,35 @@
       var r = raw && raw.date ? raw : normalizeReservation(raw);
       if (!r || r.date !== date) return;
       var key = r.dni + "|" + r.date + "|" + (r.extra ? "x" : "l") + "|" + r.status + "|" + (r.time || "");
-      if (seen[key]) return;
-      seen[key] = true;
+      var copies = mealCopies(r);
+      if (seen[key]) {
+        if (r.status !== "cancelled") {
+          var prev = seen[key];
+          var already = mealCopies(prev);
+          var nextCopies = already >= 2 || copies >= 2 ? 2 : Math.min(2, already + copies);
+          var delta = nextCopies - already;
+          prev.menus = nextCopies;
+          if (delta > 0) {
+            var hallPrev = bumpHall(hallsMap, prev.sede || sedeOfSupervisor(prev.supervisor));
+            var supPrev = bumpSup(supMap, prev.supervisor);
+            hallPrev.meals += delta;
+            supPrev.meals += delta;
+            if (prev.extra) {
+              hallPrev.extras += delta;
+              supPrev.extras += delta;
+            } else {
+              hallPrev.regular += delta;
+              supPrev.regular += delta;
+            }
+            if (!supPrev.comedores[hallPrev.name]) supPrev.comedores[hallPrev.name] = { meals: 0, extras: 0 };
+            supPrev.comedores[hallPrev.name].meals += delta;
+            if (prev.extra) supPrev.comedores[hallPrev.name].extras += delta;
+          }
+        }
+        return;
+      }
+      seen[key] = r;
+      r.menus = copies;
       if (r.status === "cancelled") {
         cancelled += 1;
         bumpSup(supMap, r.supervisor).cancelled += 1;
@@ -1363,9 +1396,11 @@
       }
       list.push(r);
       var h = bumpHall(hallsMap, r.sede || sedeOfSupervisor(r.supervisor));
-      h.meals += 1;
-      if (r.extra) h.extras += 1;
-      else h.regular += 1;
+      h.meals += copies;
+      if (r.extra) h.extras += copies;
+      else h.regular += copies;
+      if (!h.people) h.people = {};
+      if (r.dni) h.people[r.dni] = true;
       h.sups[r.supervisor] = true;
       var s = bumpSup(supMap, r.supervisor);
       if (r.supervisor_id) s.supervisor_id = r.supervisor_id;
@@ -1373,17 +1408,22 @@
       var sentAt = String(r.time || "").trim();
       if (sentAt.length === 5) sentAt += ":00";
       if (sentAt && (!s.lastTime || sentAt > s.lastTime)) s.lastTime = sentAt;
-      s.meals += 1;
-      if (r.extra) s.extras += 1;
-      else s.regular += 1;
+      s.meals += copies;
+      if (r.extra) s.extras += copies;
+      else s.regular += copies;
+      if (!s.people) s.people = {};
+      if (r.dni) s.people[r.dni] = true;
       if (!s.comedores[h.name]) s.comedores[h.name] = { meals: 0, extras: 0 };
-      s.comedores[h.name].meals += 1;
-      if (r.extra) s.comedores[h.name].extras += 1;
+      s.comedores[h.name].meals += copies;
+      if (r.extra) s.comedores[h.name].extras += copies;
     });
-    var extras = list.filter(function (r) {
-      return r.extra;
-    }).length;
-    var prepared = list.length;
+    var extras = 0;
+    var prepared = 0;
+    list.forEach(function (r) {
+      var n = mealCopies(r);
+      prepared += n;
+      if (r.extra) extras += n;
+    });
     var regular = prepared - extras;
     var groups = {};
     list.forEach(function (r) {
@@ -1394,6 +1434,7 @@
       .map(function (name) {
         var h = hallsMap[name];
         h.supervisors = Object.keys(h.sups);
+        h.personas = Object.keys(h.people || {}).length;
         return h;
       })
       .sort(function (a, b) {
@@ -1414,7 +1455,9 @@
       });
     var supervisors = Object.keys(supMap)
       .map(function (k) {
-        return supMap[k];
+        var row = supMap[k];
+        row.personas = Object.keys(row.people || {}).length;
+        return row;
       })
       .sort(function (a, b) {
         return b.meals - a.meals || a.supervisor.localeCompare(b.supervisor, "es");
@@ -1509,7 +1552,7 @@
   function rowsStamp(rows) {
     return (rows || [])
       .map(function (r) {
-        return [r.id, r.date, r.status, r.extra ? 1 : 0, r.sede, r.supervisor, r.fundo || "", r.supervisor_id || ""].join(":");
+        return [r.id, r.date, r.status, r.extra ? 1 : 0, r.menus || 1, r.sede, r.supervisor, r.fundo || "", r.supervisor_id || ""].join(":");
       })
       .sort()
       .join("|");
@@ -2367,17 +2410,21 @@
     return { comedor: hall, fundo: fundo, rank: 100000, nameKey: fold(hall) };
   }
   function verifyExportRows() {
-    var rows = visibleVerifyRows().map(function (tr) {
-      var cells = tr.querySelectorAll("td");
-      var name = (tr.querySelector(".who span:not(.avatar)") || {}).textContent || "";
-      var parts = splitComedorLabel((cells[3] && cells[3].textContent.trim()) || "");
+    var q = fold((document.getElementById("verify-q") || {}).value || "");
+    var rows = bySupervisor(ALL, TODAY).filter(function (s) {
+      var dest = destLabel(s);
+      return !q || fold(s.supervisor + " " + dest).indexOf(q) !== -1;
+    }).map(function (s) {
+      var parts = splitComedorLabel(destLabel(s));
+      var comidas = Number(s.meals) || 0;
       return {
-        supervisor: name.trim(),
-        comidas: (cells[1] && cells[1].textContent.trim()) || "0",
-        extras: tr.querySelector("[data-extras]") ? tr.querySelector("[data-extras]").getAttribute("data-extras") : "0",
+        supervisor: s.supervisor,
+        personas: Number(s.personas) || 0,
+        extras: Number(s.extras) || 0,
+        comidas: comidas,
         comedor: parts.comedor,
         fundo: parts.fundo,
-        total: (cells[4] && cells[4].textContent.trim()) || "0",
+        total: comidas,
         _rank: parts.rank,
         _nameKey: parts.nameKey,
         _fundoRank: fundoRank(parts.fundo),
@@ -2412,31 +2459,39 @@
       sheet: "Verificación",
       columns: [
         { key: "supervisor", label: "Supervisor", align: "left", width: 38 },
-        { key: "comidas", label: "Lista", align: "center", width: 12, num: true },
+        { key: "personas", label: "Personas", align: "center", width: 12, num: true },
         { key: "extras", label: "Extras", align: "center", width: 12, num: true },
-        { key: "comedor", label: "Comedor", align: "center", width: 22 },
+        { key: "comidas", label: "Comidas", align: "center", width: 12, num: true },
+        { key: "comedor", label: "Comedor", align: "center", width: 14 },
         { key: "fundo", label: "Fundo", align: "center", width: 12 },
         { key: "total", label: "Total", align: "center", width: 12, num: true },
       ],
       footer: (function () {
         var rows = verifyExportRows();
-        var comidas = 0;
+        var personas = 0;
         var extras = 0;
+        var comidas = 0;
         var total = 0;
         var comedores = {};
+        var fundos = {};
         rows.forEach(function (r) {
-          comidas += Number(r.comidas) || 0;
+          personas += Number(r.personas) || 0;
           extras += Number(r.extras) || 0;
+          comidas += Number(r.comidas) || 0;
           total += Number(r.total) || 0;
           var hall = r.comedor == null ? "" : String(r.comedor).trim();
           if (hall) comedores[hall] = true;
+          var fundo = r.fundo == null ? "" : String(r.fundo).trim();
+          if (fundo) fundos[fundo] = true;
         });
+        var nFundo = Object.keys(fundos).length;
         return {
           supervisor: "Total",
-          comidas: comidas,
+          personas: personas,
           extras: extras,
+          comidas: comidas,
           comedor: Object.keys(comedores).length + " comedores",
-          fundo: "",
+          fundo: nFundo + (nFundo === 1 ? " fundo" : " fundos"),
           total: total,
         };
       })(),
@@ -2444,80 +2499,100 @@
   }
   function comedorExportRows() {
     return byComedor(ALL, TODAY).map(function (c) {
+      var parts = splitComedorLabel(c.name);
+      var comidas = Number(c.meals) || 0;
       return {
-        comedor: c.name,
-        lista: c.regular,
-        extras: c.extras,
-        total: c.meals,
-        supervisores: c.supervisors.length,
+        comedor: parts.comedor === "" || parts.comedor == null ? c.name : parts.comedor,
+        fundo: parts.fundo,
+        personas: Number(c.personas) || 0,
+        extras: Number(c.extras) || 0,
+        comidas: comidas,
+        total: comidas,
       };
     });
   }
   function comedorExportMeta(rows) {
-    var lista = 0;
+    var personas = 0;
     var extras = 0;
+    var comidas = 0;
     var total = 0;
-    var supervisores = 0;
     rows.forEach(function (r) {
-      lista += Number(r.lista) || 0;
+      personas += Number(r.personas) || 0;
       extras += Number(r.extras) || 0;
+      comidas += Number(r.comidas) || 0;
       total += Number(r.total) || 0;
-      supervisores += Number(r.supervisores) || 0;
     });
     return {
       title: "Qberries · Comedores",
       subtitle: longDate(TODAY) + "  ·  Envíos por comedor",
       sheet: "Comedores",
       columns: [
-        { key: "comedor", label: "Comedor", align: "left", width: 28 },
-        { key: "lista", label: "Lista", align: "center", width: 12, num: true },
+        { key: "comedor", label: "Comedor", align: "left", width: 18 },
+        { key: "fundo", label: "Fundo", align: "center", width: 12 },
+        { key: "personas", label: "Personas", align: "center", width: 12, num: true },
         { key: "extras", label: "Extras", align: "center", width: 12, num: true },
+        { key: "comidas", label: "Comidas", align: "center", width: 12, num: true },
         { key: "total", label: "Total", align: "center", width: 12, num: true },
-        { key: "supervisores", label: "Supervisores", align: "center", width: 14, num: true },
       ],
       footer: {
         comedor: "Total",
-        lista: lista,
+        fundo: "",
+        personas: personas,
         extras: extras,
+        comidas: comidas,
         total: total,
-        supervisores: supervisores,
       },
     };
   }
   function reservaExportRows() {
-    return filteredReservas().map(function (r) {
+    var groups = {};
+    var order = [];
+    filteredReservas().forEach(function (r) {
       var parts = personParts(r);
       var st = statusLabel(r);
-      return {
-        dni: r.dni,
-        trabajador: parts.full || r.name,
-        hora: r.time || "",
-        supervisor: r.supervisor || "",
-        comedor: r.sede || "",
-        tipo: st.text || "",
-      };
+      var key = [r.dni, r.extra ? "x" : "l", r.status, r.supervisor, r.sede].join("|");
+      if (!groups[key]) {
+        groups[key] = {
+          dni: r.dni,
+          trabajador: parts.full || r.name,
+          comidas: 0,
+          supervisor: r.supervisor || "",
+          comedor: r.sede || "",
+          tipo: st.text || "",
+          hora: r.time || "",
+        };
+        order.push(groups[key]);
+      }
+      var n = mealCopies(r);
+      if (!groups[key].comidas) groups[key].comidas = n;
+      else if (groups[key].comidas >= 2 || n >= 2) groups[key].comidas = 2;
+      else groups[key].comidas = Math.min(2, groups[key].comidas + n);
     });
+    return order;
   }
   function reservaExportMeta(rows) {
+    var people = rows.length;
     return {
       title: "Qberries · Reservas de hoy",
-      subtitle: longDate(TODAY) + "  ·  " + rows.length + (rows.length === 1 ? " reserva" : " reservas"),
+      subtitle: longDate(TODAY) + "  ·  " + people + (people === 1 ? " reserva" : " reservas"),
       sheet: "Reservas",
       columns: [
-        { key: "dni", label: "DNI", align: "center", width: 12 },
+        { key: "dni", label: "DNI", align: "center", width: 14 },
         { key: "trabajador", label: "Trabajador", align: "left", width: 34, clip: 42 },
-        { key: "hora", label: "Hora", align: "center", width: 10 },
+        { key: "comidas", label: "Comidas", align: "center", width: 12, num: true },
         { key: "supervisor", label: "Supervisor", align: "left", width: 28, clip: 36 },
-        { key: "comedor", label: "Comedor", align: "left", width: 18 },
+        { key: "comedor", label: "Comedor", align: "left", width: 16 },
         { key: "tipo", label: "Tipo", align: "center", width: 12 },
+        { key: "hora", label: "Hora", align: "center", width: 10 },
       ],
       footer: {
         dni: "Total",
-        trabajador: rows.length + (rows.length === 1 ? " reserva" : " reservas"),
-        hora: "",
+        trabajador: people + (people === 1 ? " reserva" : " reservas"),
+        comidas: "",
         supervisor: "",
         comedor: "",
         tipo: "",
+        hora: "",
       },
     };
   }
@@ -3427,6 +3502,20 @@
     } catch (err) {}
   }
 
+  function closeHelloMenu() {
+    var menu = document.getElementById("hello-menu");
+    var btn = document.getElementById("hello-btn");
+    if (menu) menu.hidden = true;
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+  function logoutPanel() {
+    closeHelloMenu();
+    closeMenu();
+    try { closeNotices(); } catch (err) {}
+    try { closeMoves(); } catch (err) {}
+    try { sessionStorage.removeItem(PANEL_KEY); } catch (err) {}
+    showPanelLogin();
+  }
   function closeMenu() {
     var sidebar = document.getElementById("sidebar");
     var backdrop = document.getElementById("backdrop");
@@ -3435,8 +3524,82 @@
   }
 
   var booted = false;
+  var PANEL_KEY = "qberries.panel";
+  function panelOpen() {
+    try { return sessionStorage.getItem(PANEL_KEY) === "1"; } catch (err) { return false; }
+  }
+  function showPanelLogin() {
+    if (document.getElementById("panel-login")) return;
+    var gate = document.createElement("div");
+    gate.id = "panel-login";
+    gate.className = "panel-login";
+    gate.innerHTML =
+      '<form class="panel-login-card" id="panel-login-form" autocomplete="off">' +
+      '<img class="panel-login-brand" src="logo-qberries.png" alt="Qberries" width="140" height="42" />' +
+      '<p class="panel-login-kicker">Recursos Humanos</p>' +
+      '<h1>Iniciar sesión</h1>' +
+      '<p class="panel-login-lead">Acceso al panel de almuerzos. La contraseña se valida con el servidor.</p>' +
+      '<label for="panel-pass">Contraseña<input id="panel-pass" type="password" name="password" autocomplete="current-password" required /></label>' +
+      '<p class="panel-login-err" id="panel-login-err" hidden></p>' +
+      '<button type="submit" id="panel-login-btn"><span class="panel-login-spin" id="panel-login-spin" hidden></span><span id="panel-login-label">Iniciar sesión</span></button>' +
+      "</form>";
+    document.body.appendChild(gate);
+    var form = document.getElementById("panel-login-form");
+    var input = document.getElementById("panel-pass");
+    var err = document.getElementById("panel-login-err");
+    var btn = document.getElementById("panel-login-btn");
+    var label = document.getElementById("panel-login-label");
+    var spin = document.getElementById("panel-login-spin");
+    function setBusy(on) {
+      gate.classList.toggle("is-busy", on);
+      btn.disabled = on;
+      input.disabled = on;
+      spin.hidden = !on;
+      label.textContent = on ? "Iniciando sesión" : "Iniciar sesión";
+      btn.setAttribute("aria-busy", on ? "true" : "false");
+    }
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var password = String(input.value || "");
+      if (!password) {
+        err.hidden = false;
+        err.textContent = "Escribe la contraseña.";
+        return;
+      }
+      if (!root.QberriesApi || !root.QberriesApi.loginRh) {
+        err.hidden = false;
+        err.textContent = "No hay conexión con la API.";
+        return;
+      }
+      setBusy(true);
+      err.hidden = true;
+      root.QberriesApi.loginRh(password).then(function (data) {
+        if (data && data.ok === true) {
+          try { sessionStorage.setItem(PANEL_KEY, "1"); } catch (ignore) {}
+          gate.remove();
+          boot();
+          return;
+        }
+        err.hidden = false;
+        err.textContent = data && data.error === "peticion_desconocida"
+          ? "Publica Code.gs en Apps Script para activar el ingreso."
+          : "Contraseña incorrecta.";
+        input.select();
+      }).catch(function () {
+        err.hidden = false;
+        err.textContent = "No se pudo validar. Revisa la señal.";
+      }).then(function () {
+        if (document.body.contains(gate)) setBusy(false);
+      });
+    });
+    window.setTimeout(function () { input.focus(); }, 30);
+  }
   function boot() {
     if (booted) return;
+    if (!panelOpen()) {
+      showPanelLogin();
+      return;
+    }
     booted = true;
     if (location.protocol === "file:") {
       var fileWarn = document.getElementById("file-warn");
@@ -3474,7 +3637,25 @@
     }
     document.addEventListener("click", function (e) {
       if (!e.target.closest(".notice")) closeNotices();
+      if (!e.target.closest(".hello-wrap")) closeHelloMenu();
     });
+    var helloBtn = document.getElementById("hello-btn");
+    var helloMenu = document.getElementById("hello-menu");
+    var logoutBtn = document.getElementById("logout-btn");
+    if (helloBtn) {
+      helloBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (!helloMenu) return;
+        var open = helloMenu.hidden;
+        closeNotices();
+        helloMenu.hidden = !open;
+        helloBtn.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+    }
+    if (helloMenu) {
+      helloMenu.addEventListener("click", function (e) { e.stopPropagation(); });
+    }
+    if (logoutBtn) logoutBtn.addEventListener("click", logoutPanel);
     if (noticePanel) {
       noticePanel.addEventListener("click", function (e) {
         e.stopPropagation();

@@ -181,7 +181,7 @@
             .map(function (col, ci) {
               var ref = colLetter(ci + 1) + n;
               var val = r[col.key];
-              var numeric = col.num || (typeof val === "number" && isFinite(val));
+              var numeric = (col.num || (typeof val === "number" && isFinite(val))) && val !== "" && val != null;
               var center = numeric || col.align === "center";
               if (numeric) return cellNum(ref, val, zebra ? 7 : 5);
               return cellInline(ref, val == null ? "" : String(val), center ? (zebra ? 7 : 5) : zebra ? 6 : 4);
@@ -199,9 +199,9 @@
           .map(function (col, ci) {
             var ref = colLetter(ci + 1) + last;
             var val = foot[col.key];
-            var numeric = col.num || (typeof val === "number" && isFinite(val));
+            var numeric = (col.num || (typeof val === "number" && isFinite(val))) && val !== "" && val != null;
             var center = numeric || col.align === "center";
-            if (numeric) return cellNum(ref, val == null ? 0 : val, 9);
+            if (numeric) return cellNum(ref, val, 9);
             return cellInline(ref, val == null ? "" : String(val), center ? 9 : 8);
           })
           .join("") +
@@ -383,7 +383,7 @@
         cols.forEach(function (col) {
           var raw = r[col.key];
           var text = clip(raw, col.clip);
-          var numeric = col.num || (typeof raw === "number" && isFinite(raw));
+          var numeric = (col.num || (typeof raw === "number" && isFinite(raw))) && raw !== "" && raw != null;
           var center = numeric || col.align === "center";
           var tx = center ? col.x + col.w / 2 - String(text).length * 3 : col.x + 8;
           s.push("BT /F1 9 Tf " + tx + " " + (y + 7) + " Td (" + pdfEscape(text) + ") Tj ET");
@@ -396,7 +396,7 @@
         cols.forEach(function (col) {
           var raw = foot[col.key];
           var text = clip(raw, col.clip);
-          var numeric = col.num || (typeof raw === "number" && isFinite(raw));
+          var numeric = (col.num || (typeof raw === "number" && isFinite(raw))) && raw !== "" && raw != null;
           var center = numeric || col.align === "center";
           var tx = center ? col.x + col.w / 2 - String(text).length * 3 : col.x + 8;
           s.push("BT /F2 9 Tf " + tx + " " + (y + 7) + " Td (" + pdfEscape(text) + ") Tj ET");
