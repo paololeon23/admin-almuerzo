@@ -1270,7 +1270,8 @@
     var time = String(raw.time || raw.hora || "").trim();
     var id = String(raw.id || raw._id || "").trim();
     if (!id || id === dni) {
-      id = dni + "-" + date + (extra ? "-x" : "-l") + "-" + time;
+      var sid = String(raw.supervisor_id || raw.supervisorId || "").replace(/\D/g, "").slice(0, 8);
+      id = (sid || supervisor || "s") + "-" + dni + "-" + date + (extra ? "-x" : "-l") + "-" + time;
     }
     var apellido = String(raw.apellido || raw.trabajador_apellido || "").trim();
     var nombres = String(raw.nombres || raw.nombre_trabajador || raw.trabajador_nombre || "").trim();
@@ -1359,7 +1360,7 @@
     (rows || []).forEach(function (raw) {
       var r = raw && raw.date ? raw : normalizeReservation(raw);
       if (!r || r.date !== date) return;
-      var key = r.dni + "|" + r.date + "|" + (r.extra ? "x" : "l") + "|" + r.status + "|" + (r.time || "");
+      var key = (r.supervisor_id || r.supervisor || "") + "|" + r.dni + "|" + r.date + "|" + (r.extra ? "x" : "l") + "|" + r.status + "|" + (r.time || "");
       var copies = mealCopies(r);
       if (seen[key]) {
         if (r.status !== "cancelled") {
