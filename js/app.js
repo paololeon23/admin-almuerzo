@@ -2297,47 +2297,69 @@
     );
   }
 
-  function supervisorTable(rows, stats, coms) {
-    if (!rows.length) return emptyState("No hay supervisores con ese criterio.");
+  function supervisorTable(rows) {
+    var sheet = sortVerifyRows((rows || []).map(supervisorSheetRow));
+    if (!sheet.length) return emptyState("No hay supervisores con ese criterio.");
+    var personas = 0;
+    var extras = 0;
+    var comidas = 0;
+    var total = 0;
+    var comedores = {};
+    var fundos = {};
+    sheet.forEach(function (r) {
+      personas += Number(r.personas) || 0;
+      extras += Number(r.extras) || 0;
+      comidas += Number(r.comidas) || 0;
+      total += Number(r.total) || 0;
+      var hall = r.comedor == null ? "" : String(r.comedor).trim();
+      if (hall) comedores[hall] = true;
+      var fundo = r.fundo == null ? "" : String(r.fundo).trim();
+      if (fundo) fundos[fundo] = true;
+    });
+    var nFundo = Object.keys(fundos).length;
     return (
-      '<div class="table-wrap"><table class="admin-table verify-table"><thead><tr><th>Supervisor</th><th>Lista</th><th>Extras</th><th>Comedor</th><th>Total</th></tr></thead><tbody>' +
-      rows
-        .map(function (s) {
-          var destText = destLabel(s);
+      '<div class="table-wrap"><table class="admin-table verify-table"><thead><tr><th>Supervisor</th><th>Personas</th><th>Extras</th><th>Comidas</th><th>Comedor</th><th>Fundo</th><th>Total</th></tr></thead><tbody>' +
+      sheet
+        .map(function (r) {
           return (
             "<tr data-search='" +
-            esc(fold(s.supervisor + " " + destText)) +
+            esc(fold(r.supervisor + " " + r.comedor + " " + r.fundo)) +
             "'><td><div class='who'><span class='avatar'>" +
-            esc(initials(s.supervisor)) +
+            esc(initials(r.supervisor)) +
             "</span><span>" +
-            esc(s.supervisor) +
+            esc(r.supervisor) +
             "</span><button type='button' class='plus plus-sm' data-open-team='" +
-            esc(s.supervisor) +
+            esc(r.supervisor) +
             "' aria-label='Ver trabajadores de " +
-            esc(s.supervisor) +
-            "'>+</button></div></td><td>" +
-            s.regular +
-            "</td><td data-extras='" +
-            s.extras +
-            "'>" +
-            (s.extras ? "<span class='badge warn'>" + s.extras + " extra" + (s.extras === 1 ? "" : "s") + "</span>" : "<span class='muted'>Sin extras</span>") +
-            "</td><td>" +
-            esc(destText) +
+            esc(r.supervisor) +
+            "'>+</button></div></td><td class='num'>" +
+            r.personas +
+            "</td><td class='num'>" +
+            r.extras +
+            "</td><td class='num'>" +
+            r.comidas +
+            "</td><td class='num'>" +
+            esc(r.comedor) +
+            "</td><td class='num'>" +
+            esc(r.fundo) +
             "</td><td class='num-strong'>" +
-            s.meals +
+            r.total +
             "</td></tr>"
           );
         })
         .join("") +
       '</tbody><tfoot><tr class="foot"><td>Total</td><td>' +
-      stats.regular +
+      personas +
       "</td><td>" +
-      stats.extras +
-      "</td><td class='muted'>" +
-      (coms || []).length +
-      " comedores" +
+      extras +
       "</td><td>" +
-      stats.prepared +
+      comidas +
+      "</td><td>" +
+      (Object.keys(comedores).length + " comedores") +
+      "</td><td>" +
+      (nFundo + (nFundo === 1 ? " fundo" : " fundos")) +
+      "</td><td>" +
+      total +
       "</td></tr></tfoot></table></div>"
     );
   }
@@ -2394,27 +2416,23 @@
     }
     return { comedor: hall, fundo: fundo, rank: 100000, nameKey: fold(hall) };
   }
-  function verifyExportRows() {
-    var q = fold((document.getElementById("verify-q") || {}).value || "");
-    var rows = bySupervisor(ALL, TODAY).filter(function (s) {
-      var dest = destLabel(s);
-      return !q || fold(s.supervisor + " " + dest).indexOf(q) !== -1;
-    }).map(function (s) {
-      var parts = splitComedorLabel(destLabel(s));
-      var comidas = Number(s.meals) || 0;
-      return {
-        supervisor: s.supervisor,
-        personas: Number(s.personas) || 0,
-        extras: Number(s.extras) || 0,
-        comidas: comidas,
-        comedor: parts.comedor,
-        fundo: parts.fundo,
-        total: comidas,
-        _rank: parts.rank,
-        _nameKey: parts.nameKey,
-        _fundoRank: fundoRank(parts.fundo),
-      };
-    });
+  function supervisorSheetRow(s) {
+    var parts = splitComedorLabel(destLabel(s));
+    var comidas = Number(s.meals) || 0;
+    return {
+      supervisor: s.supervisor,
+      personas: Number(s.personas) || 0,
+      extras: Number(s.extras) || 0,
+      comidas: comidas,
+      comedor: parts.comedor,
+      fundo: parts.fundo,
+      total: comidas,
+      _rank: parts.rank,
+      _nameKey: parts.nameKey,
+      _fundoRank: fundoRank(parts.fundo),
+    };
+  }
+  function sortVerifyRows(rows) {
     rows.sort(function (a, b) {
       if (a._rank !== b._rank) return a._rank - b._rank;
       var byName = String(a._nameKey).localeCompare(String(b._nameKey), "es");
@@ -2423,6 +2441,14 @@
       return (Number(b.total) || 0) - (Number(a.total) || 0) || String(a.supervisor).localeCompare(String(b.supervisor), "es");
     });
     return rows;
+  }
+  function verifyExportRows() {
+    var q = fold((document.getElementById("verify-q") || {}).value || "");
+    var rows = bySupervisor(ALL, TODAY).filter(function (s) {
+      var dest = destLabel(s);
+      return !q || fold(s.supervisor + " " + dest).indexOf(q) !== -1;
+    }).map(supervisorSheetRow);
+    return sortVerifyRows(rows);
   }
   function downloadFile(name, content, mime) {
     var blob = content instanceof Blob ? content : new Blob([content], { type: mime || "application/octet-stream" });
@@ -2529,10 +2555,10 @@
       },
     };
   }
-  function reservaExportRows() {
+  function reservaGroups(list) {
     var groups = {};
     var order = [];
-    filteredReservas().forEach(function (r) {
+    (list || []).forEach(function (r) {
       var parts = personParts(r);
       var st = statusLabel(r);
       var key = [r.dni, r.extra ? "x" : "l", r.status, r.supervisor, r.sede].join("|");
@@ -2554,6 +2580,9 @@
       else groups[key].comidas = Math.min(2, groups[key].comidas + n);
     });
     return order;
+  }
+  function reservaExportRows() {
+    return reservaGroups(filteredReservas());
   }
   function reservaExportMeta(rows) {
     var people = rows.length;
@@ -2787,38 +2816,39 @@
 
   function renderComedores() {
     var rows = byComedor(ALL, TODAY);
-    var total = rows.reduce(function (a, b) { return a + b.meals; }, 0);
-    var extras = rows.reduce(function (a, b) { return a + b.extras; }, 0);
-    var lista = rows.reduce(function (a, b) { return a + b.regular; }, 0);
-    var table = rows.length
-      ? '<div class="table-wrap"><table class="admin-table comedor-table"><thead><tr><th>Comedor</th><th>Lista</th><th>Extras</th><th>Total</th><th>Supervisores</th></tr></thead><tbody>' +
-        rows
+    var exported = comedorExportRows();
+    var foot = comedorExportMeta(exported).footer;
+    var total = foot.total;
+    var extras = foot.extras;
+    var table = exported.length
+      ? '<div class="table-wrap"><table class="admin-table comedor-table"><thead><tr><th>Comedor</th><th>Fundo</th><th>Personas</th><th>Extras</th><th>Comidas</th><th>Total</th></tr></thead><tbody>' +
+        exported
           .map(function (c) {
             return (
               "<tr><td><strong>" +
-              esc(c.name) +
-              "</strong></td><td>" +
-              c.regular +
-              "</td><td>" +
-              (c.extras
-                ? "<span class='badge warn'>" + c.extras + " extra" + (c.extras === 1 ? "" : "s") + "</span>"
-                : "<span class='muted'>Sin extras</span>") +
+              esc(c.comedor) +
+              "</strong></td><td class='num'>" +
+              esc(c.fundo) +
+              "</td><td class='num'>" +
+              c.personas +
+              "</td><td class='num'>" +
+              c.extras +
+              "</td><td class='num'>" +
+              c.comidas +
               "</td><td class='num-strong'>" +
-              c.meals +
-              "</td><td>" +
-              c.supervisors.length +
+              c.total +
               "</td></tr>"
             );
           })
           .join("") +
-        '</tbody><tfoot><tr class="foot"><td>Total</td><td>' +
-        lista +
+        '</tbody><tfoot><tr class="foot"><td>Total</td><td></td><td>' +
+        foot.personas +
         "</td><td>" +
-        extras +
+        foot.extras +
         "</td><td>" +
-        total +
+        foot.comidas +
         "</td><td>" +
-        rows.reduce(function (a, b) { return a + b.supervisors.length; }, 0) +
+        foot.total +
         "</td></tr></tfoot></table></div>"
       : emptyState("Hoy no hay comidas para enviar.");
     return (
@@ -2903,8 +2933,6 @@
     });
   }
   function reservaRowHtml(r) {
-    var st = statusLabel(r);
-    var parts = personParts(r);
     return (
       '<tr data-dni="' +
       esc(r.dni) +
@@ -2912,21 +2940,19 @@
       esc(r.supervisor) +
       '"><td>' +
       esc(r.dni) +
-      '</td><td><div class="person-name"><strong>' +
-      esc(parts.apellido || r.name) +
-      "</strong>" +
-      (parts.nombres ? "<small>" + esc(parts.nombres) + "</small>" : "") +
-      "</div></td><td>" +
-      esc(r.time) +
+      "</td><td><strong>" +
+      esc(r.trabajador) +
+      "</strong></td><td class='num'>" +
+      r.comidas +
       "</td><td>" +
       esc(r.supervisor) +
       "</td><td>" +
-      esc(r.sede) +
-      "</td><td><span class='badge " +
-      st.cls +
-      "'>" +
-      st.text +
-      "</span></td></tr>"
+      esc(r.comedor) +
+      "</td><td>" +
+      esc(r.tipo) +
+      "</td><td>" +
+      esc(r.hora) +
+      "</td></tr>"
     );
   }
   function closeReservaPick() {
@@ -2973,8 +2999,8 @@
     var dniEl = document.getElementById("reserva-dni");
     if (dniEl) reservaDni = String(dniEl.value || "").replace(/\D/g, "");
     if (dniEl && dniEl.value !== reservaDni) dniEl.value = reservaDni;
-    var allToday = todayReservas();
-    var rows = filteredReservas();
+    var allToday = reservaGroups(todayReservas());
+    var rows = reservaGroups(filteredReservas());
     var pages = Math.max(1, Math.ceil(rows.length / RESERVA_PAGE_SIZE));
     if (reservaPage > pages) reservaPage = pages;
     if (reservaPage < 1) reservaPage = 1;
@@ -3037,7 +3063,7 @@
       '<header class="page-head"><p class="kicker">Administración</p><h1 class="h1">Reservas de hoy</h1><p class="sub">Filtra por supervisor o DNI. No es el listado global.</p></header>' +
       '<section class="card verify reserva-card">' +
       reservaToolbar(rows.length) +
-      '<div class="table-wrap"><table class="admin-table reserva-table"><thead><tr><th>DNI</th><th>Trabajador</th><th>Hora</th><th>Supervisor</th><th>Comedor</th><th>Tipo</th></tr></thead><tbody id="reserva-body"></tbody></table></div>' +
+      '<div class="table-wrap"><table class="admin-table reserva-table"><thead><tr><th>DNI</th><th>Trabajador</th><th>Comidas</th><th>Supervisor</th><th>Comedor</th><th>Tipo</th><th>Hora</th></tr></thead><tbody id="reserva-body"></tbody></table></div>' +
       '<div id="reserva-pager" class="team-pager" hidden></div>' +
       "</section>"
     );
