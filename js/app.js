@@ -1557,20 +1557,6 @@
       .sort()
       .join("|");
   }
-  function reconcileOrphanExtras(rows) {
-    var lista = {};
-    (rows || []).forEach(function (r) {
-      if (!r || r.status === "cancelled" || r.extra) return;
-      var key = (r.date || "") + "|" + String(r.supervisor || "").trim();
-      lista[key] = (lista[key] || 0) + 1;
-    });
-    return (rows || []).map(function (r) {
-      if (!r || r.status === "cancelled" || !r.extra) return r;
-      var key = (r.date || "") + "|" + String(r.supervisor || "").trim();
-      if (lista[key]) return r;
-      return Object.assign({}, r, { extra: false });
-    });
-  }
   function applyRows(rows, opts) {
     opts = opts || {};
     if (!Array.isArray(rows) && rows != null) return false;
@@ -1579,7 +1565,6 @@
       var r = normalizeReservation(raw) || (raw && raw.date ? raw : null);
       if (r) next.push(r);
     });
-    next = reconcileOrphanExtras(next);
     next = overlayPending(next);
     if (!next.length && ALL.length && !opts.allowEmpty) return false;
     var nextStamp = rowsStamp(next);
