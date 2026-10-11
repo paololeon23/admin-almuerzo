@@ -619,6 +619,12 @@
     var text = weekday + ", " + p[2] + " de " + month + " de " + p[0];
     return text.charAt(0).toUpperCase() + text.slice(1);
   }
+  function shortDay(key) {
+    var p = String(key || "").split("-");
+    if (p.length < 3) return "Fecha";
+    var months = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+    return Number(p[2]) + " " + (months[Number(p[1]) - 1] || "") + " " + p[0];
+  }
   function pad2(v) {
     return ("0" + v).slice(-2);
   }
@@ -1677,6 +1683,9 @@
   var pollTimer = 0;
   var clockTimer = 0;
   var pollFails = 0;
+  var pickedDay = "";
+  var pickedRows = null;
+  var pickedBusy = false;
   var verifyQ = "";
   var toastTimer = 0;
   function uiBusy() {
@@ -1686,9 +1695,11 @@
       var pick = document.getElementById("reserva-sup-pick");
       if (pick && pick.classList.contains("open")) return true;
       if (document.querySelector(".team-pick.open")) return true;
+    var dayPop = document.getElementById("day-pop");
+    if (dayPop && !dayPop.hidden) return true;
       var ae = document.activeElement;
       if (!ae) return false;
-      if (ae.id === "verify-q" || ae.id === "reserva-dni" || ae.id === "team-q") return true;
+      if (ae.id === "verify-q" || ae.id === "reserva-dni" || ae.id === "team-q" || ae.id === "day-input") return true;
       if (ae.closest && (ae.closest("#team-add") || ae.closest("#team-dest"))) return true;
     } catch (err) {}
     return false;
@@ -1729,6 +1740,67 @@
     bar.hidden = false;
     bar.className = "api-bar is-" + state;
     label.textContent = text || "";
+  }
+  function viewDay() {
+    return pickedDay && pickedDay !== TODAY ? pickedDay : TODAY;
+  }
+  function viewRows() {
+    if (pickedDay && pickedDay !== TODAY && Array.isArray(pickedRows)) return pickedRows;
+    return ALL;
+  }
+  function closeDayPop() {
+    var pop = document.getElementById("day-pop");
+    var btn = document.getElementById("day-btn");
+    if (pop) pop.hidden = true;
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+  function loadPickedDay(fecha) {
+    fecha = String(fecha || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+      toast("Elige una fecha.");
+      return;
+    }
+    if (fecha > TODAY) {
+      toast("Esa fecha todavía no llega.");
+      return;
+    }
+    if (fecha === TODAY) {
+      pickedDay = "";
+      pickedRows = null;
+      pickedBusy = false;
+      closeDayPop();
+      requestPaint();
+      return;
+    }
+    if (!CONFIG.apiUrl || !root.QberriesApi || !root.QberriesApi.queryUrl) {
+      toast("No hay conexión con la hoja.");
+      return;
+    }
+    pickedBusy = true;
+    var btn = document.getElementById("day-btn");
+    if (btn) btn.textContent = "Leyendo…";
+    var url = root.QberriesApi.queryUrl(CONFIG.apiUrl, { fecha: fecha });
+    root.QberriesApi.request({ method: "GET", url: url, fresh: true, timeout: 25000, retry: false })
+      .then(function (data) {
+        var parsed = root.QberriesApi.parseReservations(data);
+        if (!parsed) throw { message: "Los datos de ese día no se pudieron usar." };
+        var rows = [];
+        (parsed.rows || []).forEach(function (raw) {
+          var row = normalizeReservation(raw);
+          if (row && row.date === fecha) rows.push(row);
+        });
+        pickedDay = fecha;
+        pickedRows = rows;
+        pickedBusy = false;
+        closeDayPop();
+        toast(rows.length ? "Listo el " + shortDay(fecha) + "." : "Ese día no tiene pedidos.");
+        requestPaint();
+      })
+      .catch(function (err) {
+        pickedBusy = false;
+        if (btn) btn.textContent = pickedDay && pickedDay !== TODAY ? shortDay(pickedDay) : "Hoy";
+        toast((err && err.message) || "No se pudo leer ese día.");
+      });
   }
   function pullApi(opts) {
     opts = opts || {};
@@ -2376,11 +2448,38 @@
       "</div>"
     );
   }
-  function verifyToolbar() {
+  function dayPickerHtml() {
+    var day = viewDay();
+    var label = pickedBusy ? "Leyendo…" : day === TODAY ? "Hoy" : shortDay(day);
     return (
-      '<div class="verify-head"><div><h2>Verificación</h2><p class="reserva-count">Listado formal por supervisor</p></div><div class="verify-tools">' +
+      '<div class="day-pick">' +
+      '<button type="button" class="tool-btn day-btn" id="day-btn" aria-expanded="false" aria-controls="day-pop">' +
+      esc(label) +
+      "</button>" +
+      '<div class="day-pop" id="day-pop" hidden>' +
+      "<p>Consulta</p><strong>Fecha del listado</strong>" +
+      '<span class="day-hint">Se pide un solo día. El resumen de hoy sigue igual.</span>' +
+      '<input id="day-input" class="day-input" type="date" max="' +
+      esc(TODAY) +
+      '" value="' +
+      esc(day) +
+      '" aria-label="Fecha del listado" />' +
+      '<div class="day-pop-actions">' +
+      '<button type="button" class="tool-btn" id="day-today">Hoy</button>' +
+      '<button type="button" class="tool-btn tool-btn-dark" id="day-go">Consultar</button>' +
+      "</div></div></div>"
+    );
+  }
+  function verifyToolbar() {
+    var day = viewDay();
+    var note = day === TODAY ? "Hoy · listado por supervisor" : longDate(day);
+    return (
+      '<div class="verify-head"><div><h2>Verificación</h2><p class="reserva-count">' +
+      esc(note) +
+      '</p></div><div class="verify-tools">' +
       '<label class="verify-search"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>' +
       '<input id="verify-q" type="search" placeholder="Buscar supervisor o comedor…" autocomplete="off" /></label>' +
+      dayPickerHtml() +
       exportButtonsHtml("verify") +
       "</div></div>"
     );
@@ -2445,7 +2544,7 @@
   }
   function verifyExportRows() {
     var q = fold((document.getElementById("verify-q") || {}).value || "");
-    var rows = bySupervisor(ALL, TODAY).filter(function (s) {
+    var rows = bySupervisor(viewRows(), viewDay()).filter(function (s) {
       var dest = destLabel(s);
       return !q || fold(s.supervisor + " " + dest).indexOf(q) !== -1;
     }).map(supervisorSheetRow);
@@ -2467,7 +2566,7 @@
   function exportMeta() {
     return {
       title: "Qberries · Verificación de almuerzos",
-      subtitle: longDate(TODAY) + "  ·  Listado por supervisor y cantidades",
+      subtitle: longDate(viewDay()) + "  ·  Listado por supervisor y cantidades",
       sheet: "Verificación",
       columns: [
         { key: "supervisor", label: "Supervisor", align: "left", width: 38 },
@@ -2716,10 +2815,11 @@
   function renderDashboard(q) {
     var stats = totals(ALL, TODAY);
     var sups = filterSupervisors(bySupervisor(ALL, TODAY), q);
+    var verifySups = filterSupervisors(bySupervisor(viewRows(), viewDay()), q);
     var visibleStats = {
-      regular: sups.reduce(function (a, b) { return a + b.regular; }, 0),
-      extras: sups.reduce(function (a, b) { return a + b.extras; }, 0),
-      prepared: sups.reduce(function (a, b) { return a + b.meals; }, 0),
+      regular: verifySups.reduce(function (a, b) { return a + b.regular; }, 0),
+      extras: verifySups.reduce(function (a, b) { return a + b.extras; }, 0),
+      prepared: verifySups.reduce(function (a, b) { return a + b.meals; }, 0),
     };
     var memory = yesterdayNotes();
     var lateHint = memory.late
@@ -2728,7 +2828,7 @@
         (memory.lastExtra ? " · " + memory.lastExtra.time : "")
       : "Ayer nadie envió tarde";
     var coms = byComedor(ALL, TODAY);
-    var footerComs = q ? comedoresFromSupervisors(sups) : coms;
+    var footerComs = q || viewDay() !== TODAY ? comedoresFromSupervisors(verifySups) : coms;
     return (
       '<div class="layout"><div class="col">' +
       '<section class="hero"><div><p>' +
@@ -2787,13 +2887,13 @@
       "</div>" +
       '<section class="card verify">' +
       verifyToolbar() +
-      supervisorTable(sups, visibleStats, footerComs) +
+      supervisorTable(verifySups, visibleStats, footerComs) +
       "</section></div></div>"
     );
   }
 
   function renderSupervisores(q) {
-    var rows = filterSupervisors(bySupervisor(ALL, TODAY), q);
+    var rows = filterSupervisors(bySupervisor(viewRows(), viewDay()), q);
     var stats = {
       prepared: rows.reduce(function (a, b) { return a + b.meals; }, 0),
       extras: rows.reduce(function (a, b) { return a + b.extras; }, 0),
@@ -4019,6 +4119,31 @@
         }
         return;
       }
+      if (e.target.closest("#day-btn")) {
+        e.preventDefault();
+        var pop = document.getElementById("day-pop");
+        var dayBtn = document.getElementById("day-btn");
+        if (!pop) return;
+        pop.hidden = !pop.hidden;
+        if (dayBtn) dayBtn.setAttribute("aria-expanded", pop.hidden ? "false" : "true");
+        if (!pop.hidden) {
+          var input = document.getElementById("day-input");
+          if (input) input.focus();
+        }
+        return;
+      }
+      if (e.target.closest("#day-go")) {
+        e.preventDefault();
+        var chosen = document.getElementById("day-input");
+        loadPickedDay(chosen && chosen.value);
+        return;
+      }
+      if (e.target.closest("#day-today")) {
+        e.preventDefault();
+        loadPickedDay(TODAY);
+        return;
+      }
+      if (!e.target.closest(".day-pick")) closeDayPop();
       if (e.target.closest("[data-export='excel']") || e.target.closest("[data-export='pdf']")) {
         e.preventDefault();
         var btn = e.target.closest("[data-export]");
