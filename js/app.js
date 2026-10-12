@@ -505,6 +505,40 @@
     });
     return names[0];
   }
+  function hallNumber(name) {
+    var match = String(name || "").match(/(\d+)/);
+    return match ? Number(match[1]) : 0;
+  }
+  function supervisorHalls(s) {
+    var names = Object.keys((s && s.comedores) || {});
+    var halls = [];
+    var seen = {};
+    names.forEach(function (name) {
+      var n = hallNumber(name);
+      var label = n ? String(n) : String(name || "").replace(/^comedor\s+/i, "").trim();
+      if (!label || seen[label]) return;
+      seen[label] = true;
+      halls.push({ n: n || 100000, label: label });
+    });
+    halls.sort(function (a, b) {
+      return a.n - b.n || a.label.localeCompare(b.label, "es");
+    });
+    return halls.map(function (hall) {
+      return hall.label;
+    });
+  }
+  function countListedHalls(rows) {
+    var seen = {};
+    (rows || []).forEach(function (row) {
+      String(row && row.comedor != null ? row.comedor : "")
+        .split(",")
+        .forEach(function (part) {
+          var hall = part.trim();
+          if (hall) seen[hall] = true;
+        });
+    });
+    return Object.keys(seen).length;
+  }
   var WORKERS_SEED = [
     ["70501230", "Villarreal Muñoz María del Carmen", "Cosecha"],
     ["70485667", "Villarreal Muñoz Jenny Aurora", "Cosecha"],
@@ -1348,6 +1382,27 @@
     if (!map[name]) map[name] = { name: name, meals: 0, extras: 0, regular: 0, sups: {} };
     return map[name];
   }
+  function noteHallFundo(hall, fundo, copies) {
+    var mark = fundoMark(fundo);
+    if (!hall || !mark) return;
+    if (!hall.fundos) hall.fundos = {};
+    hall.fundos[mark] = (hall.fundos[mark] || 0) + (Number(copies) || 0);
+  }
+  function hallFundoText(hall) {
+    var marks = Object.keys((hall && hall.fundos) || {});
+    marks.sort(function (a, b) {
+      return fundoRank(a) - fundoRank(b) || a.localeCompare(b, "es");
+    });
+    if (marks.length) return marks.join(", ");
+    return splitComedorLabel(hall && hall.name).fundo || "";
+  }
+  function comedorScreenName(value, rawName) {
+    var raw = String(rawName || "").trim();
+    var numbered = raw.match(/^comedor\s+(\d+)$/i);
+    if (numbered) return "Comedor " + numbered[1];
+    if (value != null && /^\d+$/.test(String(value))) return "Comedor " + value;
+    return raw || String(value || "");
+  }
   function bumpSup(map, name) {
     if (!map[name]) {
       map[name] = { supervisor: name, supervisor_id: "", fundo: "", meals: 0, extras: 0, regular: 0, cancelled: 0, comedores: {} };
@@ -1390,6 +1445,7 @@
             if (!supPrev.comedores[hallPrev.name]) supPrev.comedores[hallPrev.name] = { meals: 0, extras: 0 };
             supPrev.comedores[hallPrev.name].meals += delta;
             if (prev.extra) supPrev.comedores[hallPrev.name].extras += delta;
+            noteHallFundo(hallPrev, prev.fundo, delta);
           }
         }
         return;
@@ -1423,6 +1479,7 @@
       if (!s.comedores[h.name]) s.comedores[h.name] = { meals: 0, extras: 0 };
       s.comedores[h.name].meals += copies;
       if (r.extra) s.comedores[h.name].extras += copies;
+      noteHallFundo(h, r.fundo, copies);
     });
     var extras = 0;
     var prepared = 0;
@@ -2377,15 +2434,12 @@
     var extras = 0;
     var comidas = 0;
     var total = 0;
-    var comedores = {};
     var fundos = {};
     sheet.forEach(function (r) {
       personas += Number(r.personas) || 0;
       extras += Number(r.extras) || 0;
       comidas += Number(r.comidas) || 0;
       total += Number(r.total) || 0;
-      var hall = r.comedor == null ? "" : String(r.comedor).trim();
-      if (hall) comedores[hall] = true;
       var fundo = r.fundo == null ? "" : String(r.fundo).trim();
       if (fundo) fundos[fundo] = true;
     });
@@ -2428,7 +2482,7 @@
       "</td><td>" +
       comidas +
       "</td><td>" +
-      (Object.keys(comedores).length + " comedores") +
+      (countListedHalls(sheet) + " comedores") +
       "</td><td>" +
       (nFundo + (nFundo === 1 ? " fundo" : " fundos")) +
       "</td><td>" +
@@ -2518,13 +2572,14 @@
   }
   function supervisorSheetRow(s) {
     var parts = splitComedorLabel(destLabel(s));
+    var halls = supervisorHalls(s);
     var comidas = Number(s.meals) || 0;
     return {
       supervisor: s.supervisor,
       personas: Number(s.personas) || 0,
       extras: Number(s.extras) || 0,
       comidas: comidas,
-      comedor: parts.comedor,
+      comedor: halls.length ? halls.join(", ") : parts.comedor,
       fundo: parts.fundo,
       total: comidas,
       _rank: parts.rank,
@@ -2545,8 +2600,8 @@
   function verifyExportRows() {
     var q = fold((document.getElementById("verify-q") || {}).value || "");
     var rows = bySupervisor(viewRows(), viewDay()).filter(function (s) {
-      var dest = destLabel(s);
-      return !q || fold(s.supervisor + " " + dest).indexOf(q) !== -1;
+      var halls = supervisorHalls(s).join(" ");
+      return !q || fold(s.supervisor + " " + halls + " " + (s.fundo || "")).indexOf(q) !== -1;
     }).map(supervisorSheetRow);
     return sortVerifyRows(rows);
   }
@@ -2573,7 +2628,7 @@
         { key: "personas", label: "Personas", align: "center", width: 12, num: true },
         { key: "extras", label: "Extras", align: "center", width: 12, num: true },
         { key: "comidas", label: "Comidas", align: "center", width: 12, num: true },
-        { key: "comedor", label: "Comedor", align: "center", width: 14 },
+        { key: "comedor", label: "Comedor", align: "center", width: 36, clip: 64 },
         { key: "fundo", label: "Fundo", align: "center", width: 12 },
         { key: "total", label: "Total", align: "center", width: 12, num: true },
       ],
@@ -2583,15 +2638,12 @@
         var extras = 0;
         var comidas = 0;
         var total = 0;
-        var comedores = {};
         var fundos = {};
         rows.forEach(function (r) {
           personas += Number(r.personas) || 0;
           extras += Number(r.extras) || 0;
           comidas += Number(r.comidas) || 0;
           total += Number(r.total) || 0;
-          var hall = r.comedor == null ? "" : String(r.comedor).trim();
-          if (hall) comedores[hall] = true;
           var fundo = r.fundo == null ? "" : String(r.fundo).trim();
           if (fundo) fundos[fundo] = true;
         });
@@ -2601,7 +2653,7 @@
           personas: personas,
           extras: extras,
           comidas: comidas,
-          comedor: Object.keys(comedores).length + " comedores",
+          comedor: countListedHalls(rows) + " comedores",
           fundo: nFundo + (nFundo === 1 ? " fundo" : " fundos"),
           total: total,
         };
@@ -2609,12 +2661,13 @@
     };
   }
   function comedorExportRows() {
-    return byComedor(ALL, TODAY).map(function (c) {
+    return byComedor(viewRows(), viewDay()).map(function (c) {
       var parts = splitComedorLabel(c.name);
       var comidas = Number(c.meals) || 0;
       return {
         comedor: parts.comedor === "" || parts.comedor == null ? c.name : parts.comedor,
-        fundo: parts.fundo,
+        screenComedor: comedorScreenName(parts.comedor, c.name),
+        fundo: hallFundoText(c) || parts.fundo,
         personas: Number(c.personas) || 0,
         extras: Number(c.extras) || 0,
         comidas: comidas,
@@ -2635,7 +2688,7 @@
     });
     return {
       title: "Qberries · Comedores",
-      subtitle: longDate(TODAY) + "  ·  Envíos por comedor",
+      subtitle: longDate(viewDay()) + "  ·  Envíos por comedor",
       sheet: "Comedores",
       columns: [
         { key: "comedor", label: "Comedor", align: "left", width: 18 },
@@ -2688,7 +2741,7 @@
     var people = rows.length;
     return {
       title: "Qberries · Reservas de hoy",
-      subtitle: longDate(TODAY) + "  ·  " + people + (people === 1 ? " reserva" : " reservas"),
+      subtitle: longDate(viewDay()) + "  ·  " + people + (people === 1 ? " reserva" : " reservas"),
       sheet: "Reservas",
       columns: [
         { key: "dni", label: "DNI", align: "center", width: 14 },
@@ -2748,11 +2801,17 @@
     if (tab && fold(tab) !== fold(file)) return file + ", pestaña " + tab;
     return file;
   }
+  function downloadStamp() {
+    var p = limaParts();
+    return pad2(p.day) + "/" + pad2(p.month) + "/" + p.year + " " + pad2(p.hour) + ":" + pad2(p.minute);
+  }
   function withExportScope(meta, scope) {
     var next = {};
     var key;
     for (key in meta) if (Object.prototype.hasOwnProperty.call(meta, key)) next[key] = meta[key];
     next.exportScope = scope || "verify";
+    var subtitle = String(meta && meta.subtitle || "");
+    next.subtitle = subtitle + (subtitle ? "  ·  " : "") + "Descargado " + downloadStamp();
     return next;
   }
   function exportVerifyExcel() {
@@ -2916,7 +2975,7 @@
   }
 
   function renderComedores() {
-    var rows = byComedor(ALL, TODAY);
+    var rows = byComedor(viewRows(), viewDay());
     var exported = comedorExportRows();
     var foot = comedorExportMeta(exported).footer;
     var total = foot.total;
@@ -2927,7 +2986,7 @@
           .map(function (c) {
             return (
               "<tr><td><strong>" +
-              esc(c.comedor) +
+              esc(c.screenComedor || c.comedor) +
               "</strong></td><td class='num'>" +
               esc(c.fundo) +
               "</td><td class='num'>" +
@@ -2962,7 +3021,10 @@
       extras +
       "</b></article></div>" +
       '<section class="card verify">' +
-      '<div class="verify-head"><div><h2>Comedores</h2><p class="reserva-count">Listado formal por comedor</p></div><div class="verify-tools">' +
+      '<div class="verify-head"><div><h2>Comedores</h2><p class="reserva-count">' +
+      esc(longDate(viewDay())) +
+      "</p></div><div class=\"verify-tools\">" +
+      dayPickerHtml() +
       exportButtonsHtml("comedores") +
       "</div></div>" +
       table +
@@ -3017,13 +3079,15 @@
       '<input id="reserva-dni" type="search" inputmode="numeric" maxlength="8" placeholder="Buscar DNI…" autocomplete="off" value="' +
       esc(reservaDni) +
       '" /></label>' +
+      dayPickerHtml() +
       exportButtonsHtml("reservas") +
       "</div></div>"
     );
   }
   function todayReservas() {
-    return ALL.filter(function (r) {
-      return r.date === TODAY;
+    var day = viewDay();
+    return viewRows().filter(function (r) {
+      return r.date === day;
     }).sort(function (a, b) {
       return String(b.time || "").localeCompare(String(a.time || ""));
     });
@@ -3122,7 +3186,7 @@
         empty.className = "empty reserva-empty";
         empty.textContent = reservaDni || reservaSup
           ? "No hay reservas con ese supervisor o DNI."
-          : "Hoy no hay reservas.";
+          : "No hay reservas en este día.";
         table.parentNode.appendChild(empty);
       }
       table.style.display = "none";

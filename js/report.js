@@ -362,6 +362,13 @@
       pages.push(rows.slice(p * perPage, (p + 1) * perPage));
     }
 
+    function textX(col, text, center) {
+      var s = String(text || "");
+      if (!center) return col.x + 6;
+      var tx = col.x + (col.w - s.length * 4.4) / 2;
+      if (tx < col.x + 2) return col.x + 2;
+      return tx;
+    }
     function pageStream(chunk, pageIndex, isLast) {
       var y = tableTop;
       var s = [];
@@ -373,7 +380,7 @@
       s.push("0.247 0.529 0.212 rg " + margin + " " + y + " " + (W - margin * 2) + " " + rowH + " re f");
       s.push("1 1 1 rg");
       cols.forEach(function (col) {
-        var tx = col.align === "center" ? col.x + col.w / 2 - Math.min(28, col.label.length * 2.4) : col.x + 8;
+        var tx = textX(col, col.label, col.align === "center");
         s.push("BT /F2 8 Tf " + tx + " " + (y + 7) + " Td (" + pdfEscape(col.label) + ") Tj ET");
       });
       y -= rowH;
@@ -385,7 +392,7 @@
           var text = clip(raw, col.clip);
           var numeric = (col.num || (typeof raw === "number" && isFinite(raw))) && raw !== "" && raw != null;
           var center = numeric || col.align === "center";
-          var tx = center ? col.x + col.w / 2 - String(text).length * 3 : col.x + 8;
+          var tx = textX(col, text, center);
           s.push("BT /F1 9 Tf " + tx + " " + (y + 7) + " Td (" + pdfEscape(text) + ") Tj ET");
         });
         y -= rowH;
@@ -398,7 +405,7 @@
           var text = clip(raw, col.clip);
           var numeric = (col.num || (typeof raw === "number" && isFinite(raw))) && raw !== "" && raw != null;
           var center = numeric || col.align === "center";
-          var tx = center ? col.x + col.w / 2 - String(text).length * 3 : col.x + 8;
+          var tx = textX(col, text, center);
           s.push("BT /F2 9 Tf " + tx + " " + (y + 7) + " Td (" + pdfEscape(text) + ") Tj ET");
         });
         y -= 28;
