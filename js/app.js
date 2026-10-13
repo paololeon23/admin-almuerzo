@@ -527,6 +527,16 @@
       return hall.label;
     });
   }
+  function noteSupHall(sup, hallName, copies, extra, fundo) {
+    if (!sup || !hallName) return;
+    if (!sup.comedores[hallName]) sup.comedores[hallName] = { meals: 0, extras: 0, fundos: {} };
+    var box = sup.comedores[hallName];
+    if (!box.fundos) box.fundos = {};
+    box.meals += copies;
+    if (extra) box.extras += copies;
+    var mark = fundoMark(fundo);
+    if (mark) box.fundos[mark] = (box.fundos[mark] || 0) + copies;
+  }
   function countListedHalls(rows) {
     var seen = {};
     (rows || []).forEach(function (row) {
@@ -1442,9 +1452,8 @@
               hallPrev.regular += delta;
               supPrev.regular += delta;
             }
-            if (!supPrev.comedores[hallPrev.name]) supPrev.comedores[hallPrev.name] = { meals: 0, extras: 0 };
-            supPrev.comedores[hallPrev.name].meals += delta;
-            if (prev.extra) supPrev.comedores[hallPrev.name].extras += delta;
+            if (!supPrev.comedores[hallPrev.name]) supPrev.comedores[hallPrev.name] = { meals: 0, extras: 0, fundos: {} };
+            noteSupHall(supPrev, hallPrev.name, delta, prev.extra, prev.fundo);
             noteHallFundo(hallPrev, prev.fundo, delta);
           }
         }
@@ -1476,9 +1485,8 @@
       else s.regular += copies;
       if (!s.people) s.people = {};
       if (r.dni) s.people[r.dni] = true;
-      if (!s.comedores[h.name]) s.comedores[h.name] = { meals: 0, extras: 0 };
-      s.comedores[h.name].meals += copies;
-      if (r.extra) s.comedores[h.name].extras += copies;
+      if (!s.comedores[h.name]) s.comedores[h.name] = { meals: 0, extras: 0, fundos: {} };
+      noteSupHall(s, h.name, copies, r.extra, r.fundo);
       noteHallFundo(h, r.fundo, copies);
     });
     var extras = 0;
@@ -2427,30 +2435,37 @@
     );
   }
 
-  function supervisorTable(rows) {
-    var sheet = sortVerifyRows((rows || []).map(supervisorSheetRow));
-    if (!sheet.length) return emptyState("No hay supervisores con ese criterio.");
-    var personas = 0;
-    var extras = 0;
-    var comidas = 0;
-    var total = 0;
-    var fundos = {};
-    sheet.forEach(function (r) {
-      personas += Number(r.personas) || 0;
-      extras += Number(r.extras) || 0;
-      comidas += Number(r.comidas) || 0;
-      total += Number(r.total) || 0;
-      var fundo = r.fundo == null ? "" : String(r.fundo).trim();
-      if (fundo) fundos[fundo] = true;
+  function screenVerifyRows(sups) {
+    var out = [];
+    (sups || []).forEach(function (s) {
+      supervisorDetailRows(s).forEach(function (row) {
+        out.push(row);
+      });
     });
-    var nFundo = Object.keys(fundos).length;
+    out.sort(function (a, b) {
+      var byName = String(a._sup).localeCompare(String(b._sup), "es");
+      if (byName) return byName;
+      if (a._hall !== b._hall) return a._hall - b._hall;
+      return String(a._name || a.comedor).localeCompare(String(b._name || b.comedor), "es");
+    });
+    return out;
+  }
+  function supervisorTable(rows) {
+    var sheet = screenVerifyRows(rows);
+    if (!sheet.length) return emptyState("No hay supervisores con ese criterio.");
+    var cantidad = 0;
+    sheet.forEach(function (r) {
+      cantidad += Number(r.cantidad) || 0;
+    });
     return (
-      '<div class="table-wrap"><table class="admin-table verify-table"><thead><tr><th>Supervisor</th><th>Personas</th><th>Extras</th><th>Comidas</th><th>Comedor</th><th>Fundo</th><th>Total</th></tr></thead><tbody>' +
+      '<div class="table-wrap"><table class="admin-table verify-table"><thead><tr><th>Supervisor</th><th>Comedor</th><th>Etapa</th><th>Cantidad</th></tr></thead><tbody>' +
       sheet
         .map(function (r) {
           return (
             "<tr data-search='" +
-            esc(fold(r.supervisor + " " + r.comedor + " " + r.fundo)) +
+            esc(fold(r.supervisor + " " + r.comedor + " " + r.etapa)) +
+            "' data-cantidad='" +
+            (Number(r.cantidad) || 0) +
             "'><td><div class='who'><span class='avatar'>" +
             esc(initials(r.supervisor)) +
             "</span><span>" +
@@ -2460,33 +2475,17 @@
             "' aria-label='Ver trabajadores de " +
             esc(r.supervisor) +
             "'>+</button></div></td><td class='num'>" +
-            r.personas +
-            "</td><td class='num'>" +
-            r.extras +
-            "</td><td class='num'>" +
-            r.comidas +
-            "</td><td class='num'>" +
             esc(r.comedor) +
             "</td><td class='num'>" +
-            esc(r.fundo) +
+            esc(r.etapa) +
             "</td><td class='num-strong'>" +
-            r.total +
+            (Number(r.cantidad) || 0) +
             "</td></tr>"
           );
         })
         .join("") +
-      '</tbody><tfoot><tr class="foot"><td>Total</td><td>' +
-      personas +
-      "</td><td>" +
-      extras +
-      "</td><td>" +
-      comidas +
-      "</td><td>" +
-      (countListedHalls(sheet) + " comedores") +
-      "</td><td>" +
-      (nFundo + (nFundo === 1 ? " fundo" : " fundos")) +
-      "</td><td>" +
-      total +
+      '</tbody><tfoot><tr class="foot"><td>Total</td><td></td><td></td><td data-verify-total>' +
+      cantidad +
       "</td></tr></tfoot></table></div>"
     );
   }
@@ -2597,13 +2596,64 @@
     });
     return rows;
   }
+  function etapaDe(fundos, fallback) {
+    var marks = Object.keys(fundos || {});
+    marks.sort(function (a, b) {
+      return (fundos[b] || 0) - (fundos[a] || 0) || fundoRank(a) - fundoRank(b);
+    });
+    var mark = marks[0] || fundoMark(fallback) || "";
+    var rank = fundoRank(mark);
+    return rank <= 10 ? rank : mark;
+  }
+  function hallExportLabel(name) {
+    var raw = String(name || "").trim();
+    var numbered = raw.match(/^comedor\s+(\d+)$/i);
+    if (numbered) return Number(numbered[1]);
+    return raw;
+  }
+  function supervisorDetailRows(s) {
+    var names = Object.keys((s && s.comedores) || {});
+    if (!names.length) {
+      return [{
+        supervisor: s.supervisor,
+        comedor: "",
+        etapa: etapaDe(null, s.fundo),
+        cantidad: Number(s.meals) || 0,
+        _sup: fold(s.supervisor),
+        _hall: 100000,
+      }];
+    }
+    return names.map(function (name) {
+      var box = s.comedores[name] || {};
+      var n = hallNumber(name);
+      return {
+        supervisor: s.supervisor,
+        comedor: hallExportLabel(name),
+        etapa: etapaDe(box.fundos, s.fundo),
+        cantidad: Number(box.meals) || 0,
+        _sup: fold(s.supervisor),
+        _hall: n || 100000,
+        _name: hallExportLabel(name),
+      };
+    });
+  }
   function verifyExportRows() {
     var q = fold((document.getElementById("verify-q") || {}).value || "");
-    var rows = bySupervisor(viewRows(), viewDay()).filter(function (s) {
+    var out = [];
+    bySupervisor(viewRows(), viewDay()).forEach(function (s) {
       var halls = supervisorHalls(s).join(" ");
-      return !q || fold(s.supervisor + " " + halls + " " + (s.fundo || "")).indexOf(q) !== -1;
-    }).map(supervisorSheetRow);
-    return sortVerifyRows(rows);
+      if (q && fold(s.supervisor + " " + halls + " " + (s.fundo || "")).indexOf(q) === -1) return;
+      supervisorDetailRows(s).forEach(function (row) {
+        out.push(row);
+      });
+    });
+    out.sort(function (a, b) {
+      var byName = String(a._sup).localeCompare(String(b._sup), "es");
+      if (byName) return byName;
+      if (a._hall !== b._hall) return a._hall - b._hall;
+      return String(a._name || a.comedor).localeCompare(String(b._name || b.comedor), "es");
+    });
+    return out;
   }
   function downloadFile(name, content, mime) {
     var blob = content instanceof Blob ? content : new Blob([content], { type: mime || "application/octet-stream" });
@@ -2621,41 +2671,25 @@
   function exportMeta() {
     return {
       title: "Qberries · Verificación de almuerzos",
-      subtitle: longDate(viewDay()) + "  ·  Listado por supervisor y cantidades",
+      subtitle: longDate(viewDay()) + "  ·  Cantidad por supervisor y comedor",
       sheet: "Verificación",
       columns: [
         { key: "supervisor", label: "Supervisor", align: "left", width: 38 },
-        { key: "personas", label: "Personas", align: "center", width: 12, num: true },
-        { key: "extras", label: "Extras", align: "center", width: 12, num: true },
-        { key: "comidas", label: "Comidas", align: "center", width: 12, num: true },
-        { key: "comedor", label: "Comedor", align: "center", width: 36, clip: 64 },
-        { key: "fundo", label: "Fundo", align: "center", width: 12 },
-        { key: "total", label: "Total", align: "center", width: 12, num: true },
+        { key: "comedor", label: "Comedor", align: "center", width: 18 },
+        { key: "etapa", label: "Etapa", align: "center", width: 12 },
+        { key: "cantidad", label: "Cantidad", align: "center", width: 14, num: true },
       ],
       footer: (function () {
         var rows = verifyExportRows();
-        var personas = 0;
-        var extras = 0;
-        var comidas = 0;
-        var total = 0;
-        var fundos = {};
+        var cantidad = 0;
         rows.forEach(function (r) {
-          personas += Number(r.personas) || 0;
-          extras += Number(r.extras) || 0;
-          comidas += Number(r.comidas) || 0;
-          total += Number(r.total) || 0;
-          var fundo = r.fundo == null ? "" : String(r.fundo).trim();
-          if (fundo) fundos[fundo] = true;
+          cantidad += Number(r.cantidad) || 0;
         });
-        var nFundo = Object.keys(fundos).length;
         return {
           supervisor: "Total",
-          personas: personas,
-          extras: extras,
-          comidas: comidas,
-          comedor: countListedHalls(rows) + " comedores",
-          fundo: nFundo + (nFundo === 1 ? " fundo" : " fundos"),
-          total: total,
+          comedor: "",
+          etapa: "",
+          cantidad: cantidad,
         };
       })(),
     };
@@ -2840,11 +2874,17 @@
     var q = fold(query);
     var rows = table.querySelectorAll("tbody tr");
     var shown = 0;
+    var total = 0;
     Array.prototype.forEach.call(rows, function (tr) {
       var ok = !q || (tr.getAttribute("data-search") || "").indexOf(q) !== -1;
       tr.style.display = ok ? "" : "none";
-      if (ok) shown += 1;
+      if (ok) {
+        shown += 1;
+        total += Number(tr.getAttribute("data-cantidad")) || 0;
+      }
     });
+    var foot = table.querySelector("[data-verify-total]");
+    if (foot) foot.textContent = String(total);
     var empty = table.parentNode.querySelector(".verify-empty");
     if (!shown) {
       if (!empty) {
