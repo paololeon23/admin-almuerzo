@@ -479,19 +479,12 @@
   function supervisorOptions() {
     var seen = {};
     var list = [];
-    function add(name) {
-      name = String(name || "").trim();
+    bySupervisor(viewRows(), viewDay()).forEach(function (s) {
+      var name = String(s.supervisor || "").trim();
       if (!name || seen[fold(name)]) return;
       seen[fold(name)] = true;
       list.push(name);
-    }
-    CATALOG_SUPS.forEach(function (s) {
-      add(s.name || s.nombre);
     });
-    ALL.forEach(function (r) {
-      add(r.supervisor);
-    });
-    if (!CONFIG.apiUrl) SUPERVISORS.forEach(add);
     list.sort(function (a, b) {
       return a.localeCompare(b, "es");
     });
@@ -1317,7 +1310,8 @@
     var date = String(raw.date || raw.fecha || "").slice(0, 10);
     if (!date) return null;
     var dni = String(raw.dni || raw.documento || "").replace(/\D/g, "");
-    var time = String(raw.time || raw.hora || "").trim();
+    var time = String(raw.time || raw.hora || raw.hora_envio || raw.enviado || "").trim();
+    var savedAt = String(raw.hora_guardado || raw.saved_at || raw.synced_at || raw.llegada || "").trim();
     var id = String(raw.id || raw._id || "").trim();
     if (!id || id === dni) {
       var sid = String(raw.supervisor_id || raw.supervisorId || "").replace(/\D/g, "").slice(0, 8);
@@ -1331,6 +1325,18 @@
     }
     if (!name) name = String(raw.nombre || "").trim();
     if (!name) name = (apellido + " " + nombres).replace(/\s+/g, " ").trim();
+    var lagRaw = fold(raw.retraso || raw.signal_lag || raw.offline_sync || raw.motivo || "");
+    var lagFlag =
+      raw.retraso === true ||
+      raw.signal_lag === true ||
+      raw.offline_sync === true ||
+      lagRaw === "1" ||
+      lagRaw === "true" ||
+      lagRaw === "si" ||
+      lagRaw === "senal" ||
+      lagRaw === "señal" ||
+      lagRaw.indexOf("senal") !== -1 ||
+      lagRaw.indexOf("señal") !== -1;
     return {
       id: id,
       dni: dni,
@@ -1342,6 +1348,8 @@
       mealName: String(raw.mealName || raw.plato || "").trim(),
       date: date,
       time: time,
+      savedAt: savedAt,
+      signalLag: lagFlag,
       supervisor: supervisor,
       supervisor_id: String(raw.supervisor_id || raw.supervisorId || "").replace(/\D/g, "").slice(0, 8),
       sede: sede,
@@ -1350,6 +1358,27 @@
       status: status,
       menus: mealCopies(raw),
     };
+  }
+  function normClock(value) {
+    var t = String(value || "").trim();
+    if (!t) return "";
+    if (/^\d{1,2}:\d{2}$/.test(t)) return (t.length === 4 ? "0" + t : t) + ":00";
+    if (/^\d{1,2}:\d{2}:\d{2}$/.test(t)) {
+      var bits = t.split(":");
+      return pad(bits[0]) + ":" + bits[1] + ":" + bits[2];
+    }
+    return t;
+  }
+  function clockLagSeconds(sent, saved) {
+    var a = normClock(sent);
+    var b = normClock(saved);
+    if (!a || !b || a === b) return 0;
+    function toSec(v) {
+      var p = v.split(":").map(Number);
+      return (p[0] || 0) * 3600 + (p[1] || 0) * 60 + (p[2] || 0);
+    }
+    var d = toSec(b) - toSec(a);
+    return d > 0 ? d : 0;
   }
   function generate(now) {
     var rand = mulberry32(20260905);
@@ -1425,6 +1454,7 @@
     var seen = {};
     var list = [];
     var cancelled = 0;
+    var arriveN = 0;
     hallNames().forEach(function (name) {
       bumpHall(hallsMap, name);
     });
@@ -1474,12 +1504,18 @@
       if (!h.people) h.people = {};
       if (r.dni) h.people[r.dni] = true;
       h.sups[r.supervisor] = true;
+      var isNewSup = !supMap[r.supervisor];
       var s = bumpSup(supMap, r.supervisor);
+      if (isNewSup) s.arriveSeq = arriveN++;
       if (r.supervisor_id) s.supervisor_id = r.supervisor_id;
       if (r.fundo) s.fundo = r.fundo;
-      var sentAt = String(r.time || "").trim();
-      if (sentAt.length === 5) sentAt += ":00";
+      var sentAt = normClock(r.time);
+      var savedAt = normClock(r.savedAt);
+      if (sentAt && (!s.firstTime || sentAt < s.firstTime)) s.firstTime = sentAt;
       if (sentAt && (!s.lastTime || sentAt > s.lastTime)) s.lastTime = sentAt;
+      if (savedAt && (!s.lastSaved || savedAt > s.lastSaved)) s.lastSaved = savedAt;
+      if (r.signalLag) s.signalLag = true;
+      if (clockLagSeconds(sentAt, savedAt) >= 120) s.signalLag = true;
       s.meals += copies;
       if (r.extra) s.extras += copies;
       else s.regular += copies;
@@ -1534,6 +1570,7 @@
       .sort(function (a, b) {
         return b.meals - a.meals || a.supervisor.localeCompare(b.supervisor, "es");
       });
+    markSignalLags(supervisors);
     return {
       list: list,
       cancelled: cancelled,
@@ -1878,21 +1915,21 @@
     }
     apiBusy = true;
     var silent = !!opts.silent;
-    if (!silent && !ALL.length) setApiBar("loading", "Cargando reservas…");
+    if (!ALL.length) setApiBar("loading", "Cargando reservas…");
+    else setApiBar("ok");
     return root.QberriesApi.getReservations({
       fresh: true,
-      timeout: silent ? 8000 : CONFIG.timeoutMs,
+      retry: false,
+      timeout: CONFIG.timeoutMs || 90000,
     })
       .then(function (pack) {
         var rows = Array.isArray(pack) ? pack : pack && pack.rows;
         var trusted = Array.isArray(pack) || !!(pack && pack.trusted);
         if (!Array.isArray(rows)) throw { status: 422, message: "Los datos recibidos no se pudieron usar." };
-        if (silent && teamBusy) {
-          pollFails = 0;
+        if (!rows.length && ALL.length && !trusted) {
           setApiBar("ok");
           return false;
         }
-        if (!rows.length && ALL.length && !trusted) return false;
         pollFails = 0;
         var changed = applyRows(rows, { render: true, allowEmpty: trusted && !rows.length });
         lastSyncAt = Date.now();
@@ -1906,19 +1943,11 @@
         if (ALL.length || DAY_SNAPS[TODAY] || DAY_SNAPS[addDays(TODAY, -1)]) {
           dataSource = "stale";
           setDataStamp();
-          if (!silent && pollFails >= 2) {
-            setApiBar(
-              "error",
-              (err && err.offline ? "Sin conexión. Se muestran los datos guardados." : err && err.message) ||
-                "No se pudo actualizar. Se muestran los datos guardados."
-            );
-          } else {
-            setApiBar("hidden");
-          }
+          setApiBar("ok");
           return false;
         }
         if (!silent || pollFails >= 3) {
-          setApiBar("error", (err && err.message) || "No se pudo cargar la información. Intente nuevamente.");
+          setApiBar("loading", "Cargando reservas…");
         }
         return false;
       })
@@ -1948,11 +1977,11 @@
       var n = 0;
       var t = root.setInterval(function () {
         n += 1;
-        if (!apiBusy || n > 30) {
+        if (!apiBusy || n > 360) {
           root.clearInterval(t);
           resolve();
         }
-      }, 150);
+      }, 250);
     });
   }
   var refreshBusy = false;
@@ -1986,7 +2015,7 @@
     root.clearTimeout(syncTimer);
     syncTimer = root.setTimeout(function () {
       if (refreshBusy) finishOk();
-    }, 12000);
+    }, 90000);
     waitApiFree()
       .then(function () {
         return pullCatalog();
@@ -2742,37 +2771,33 @@
       },
     };
   }
-  function reservaGroups(list) {
-    var groups = {};
-    var order = [];
+  function mealCountOf(list) {
+    var n = 0;
     (list || []).forEach(function (r) {
+      n += Number(r && r.comidas != null ? r.comidas : mealCopies(r)) || 0;
+    });
+    return n;
+  }
+  function reservaGroups(list) {
+    return (list || []).map(function (r) {
       var parts = personParts(r);
       var st = statusLabel(r);
-      var key = [r.dni, r.extra ? "x" : "l", r.status, r.supervisor, r.sede].join("|");
-      if (!groups[key]) {
-        groups[key] = {
-          dni: r.dni,
-          trabajador: parts.full || r.name,
-          comidas: 0,
-          supervisor: r.supervisor || "",
-          comedor: r.sede || "",
-          tipo: st.text || "",
-          hora: r.time || "",
-        };
-        order.push(groups[key]);
-      }
-      var n = mealCopies(r);
-      if (!groups[key].comidas) groups[key].comidas = n;
-      else if (groups[key].comidas >= 2 || n >= 2) groups[key].comidas = 2;
-      else groups[key].comidas = Math.min(2, groups[key].comidas + n);
+      return {
+        dni: r.dni,
+        trabajador: parts.full || r.name,
+        comidas: mealCopies(r),
+        supervisor: r.supervisor || "",
+        comedor: r.sede || "",
+        tipo: st.text || "",
+        hora: r.time || "",
+      };
     });
-    return order;
   }
   function reservaExportRows() {
     return reservaGroups(filteredReservas());
   }
   function reservaExportMeta(rows) {
-    var people = rows.length;
+    var people = mealCountOf(rows);
     return {
       title: "Qberries · Reservas de hoy",
       subtitle: longDate(viewDay()) + "  ·  " + people + (people === 1 ? " reserva" : " reservas"),
@@ -2789,7 +2814,7 @@
       footer: {
         dni: "Total",
         trabajador: people + (people === 1 ? " reserva" : " reservas"),
-        comidas: "",
+        comidas: people,
         supervisor: "",
         comedor: "",
         tipo: "",
@@ -2900,16 +2925,58 @@
     }
   }
 
-  function cardsByArrival(list) {
-    return (list || []).slice().sort(function (a, b) {
-      var ta = a.lastTime || "";
-      var tb = b.lastTime || "";
-      if (!ta && !tb) return b.meals - a.meals || a.supervisor.localeCompare(b.supervisor, "es");
-      if (!ta) return 1;
-      if (!tb) return -1;
-      if (ta !== tb) return tb.localeCompare(ta);
-      return b.meals - a.meals || a.supervisor.localeCompare(b.supervisor, "es");
+  function markSignalLags(list) {
+    var rows = list || [];
+    var bySend = rows
+      .slice()
+      .filter(function (s) {
+        return s.firstTime || s.lastTime;
+      })
+      .sort(function (a, b) {
+        var ta = a.firstTime || a.lastTime || "";
+        var tb = b.firstTime || b.lastTime || "";
+        if (ta !== tb) return ta.localeCompare(tb);
+        return (a.arriveSeq || 0) - (b.arriveSeq || 0);
+      });
+    var sendRank = {};
+    bySend.forEach(function (s, i) {
+      sendRank[s.supervisor] = i;
     });
+    rows.forEach(function (s) {
+      if (s.signalLag) return;
+      if (s.lastSaved && s.firstTime && clockLagSeconds(s.firstTime, s.lastSaved) >= 120) {
+        s.signalLag = true;
+        return;
+      }
+      var sr = sendRank[s.supervisor];
+      var ar = s.arriveSeq;
+      if (sr == null || ar == null) return;
+      if (ar - sr >= 2) s.signalLag = true;
+    });
+  }
+  function cardsByArrival(list) {
+    return (list || [])
+      .slice()
+      .sort(function (a, b) {
+        var aa = a.arriveSeq;
+        var bb = b.arriveSeq;
+        if (aa != null && bb != null && aa !== bb) return bb - aa;
+        var ta = a.lastSaved || a.lastTime || "";
+        var tb = b.lastSaved || b.lastTime || "";
+        if (ta && tb && ta !== tb) return tb.localeCompare(ta);
+        return b.meals - a.meals || a.supervisor.localeCompare(b.supervisor, "es");
+      })
+      .slice(0, 8);
+  }
+  function signalLagHtml(s) {
+    if (!s || !s.signalLag) return "";
+    return (
+      '<p class="sup-signal" title="Envió a tiempo en el celular, pero llegó tarde por mala señal.">' +
+      '<span class="sup-wifi" aria-hidden="true">' +
+      '<i></i><i></i><i></i>' +
+      "</span>" +
+      "<span>Retraso por señal baja</span></p>"
+    );
   }
   function renderDashboard(q) {
     var stats = totals(ALL, TODAY);
@@ -2961,11 +3028,13 @@
       '<div class="full"><div class="section-head"><h2>Comidas por supervisor</h2><a href="#/supervisores" class="link">Ver todos</a></div>' +
       '<div class="sup-grid">' +
       (sups.length
-        ? cardsByArrival(sups).slice(0, 8)
+        ? cardsByArrival(sups)
             .map(function (s) {
               var destText = destLabel(s);
               return (
-                '<article class="card sup-card"><div class="split"><h3>' +
+                '<article class="card sup-card' +
+                (s.signalLag ? " has-signal" : "") +
+                '"><div class="split"><h3>' +
                 esc(s.supervisor) +
                 '</h3><button type="button" class="plus" data-open-team="' +
                 esc(s.supervisor) +
@@ -2978,7 +3047,9 @@
                 (s.extras ? " · " + s.extras + " extras" : " · sin extras") +
                 "</p><p class=\"muted\">" +
                 esc(destText || "Sin comedor") +
-                "</p></article>"
+                "</p>" +
+                signalLagHtml(s) +
+                "</article>"
               );
             })
             .join("")
@@ -2994,10 +3065,11 @@
   function renderSupervisores(q) {
     var rows = filterSupervisors(bySupervisor(viewRows(), viewDay()), q);
     var stats = {
-      prepared: rows.reduce(function (a, b) { return a + b.meals; }, 0),
+      prepared: mealCountOf(activeOn(viewRows(), viewDay())),
       extras: rows.reduce(function (a, b) { return a + b.extras; }, 0),
       regular: rows.reduce(function (a, b) { return a + b.regular; }, 0),
     };
+    if (q) stats.prepared = rows.reduce(function (a, b) { return a + b.meals; }, 0);
     return (
       '<header class="page-head"><p class="kicker">Administración</p><h1 class="h1">Supervisores</h1><p class="sub">Cuántas comidas pidió cada uno, si hay extras y a qué comedor se envían.</p></header>' +
       '<div class="grid3"><article class="card mini"><span>Supervisores</span><b>' +
@@ -3125,11 +3197,8 @@
     );
   }
   function todayReservas() {
-    var day = viewDay();
-    return viewRows().filter(function (r) {
-      return r.date === day;
-    }).sort(function (a, b) {
-      return String(b.time || "").localeCompare(String(a.time || ""));
+    return activeOn(viewRows(), viewDay()).slice().sort(function (a, b) {
+      return String(b.time || "").localeCompare(String(a.time || "")) || String(a.dni || "").localeCompare(String(b.dni || ""));
     });
   }
   function filteredReservas() {
@@ -3206,6 +3275,8 @@
     if (dniEl && dniEl.value !== reservaDni) dniEl.value = reservaDni;
     var allToday = reservaGroups(todayReservas());
     var rows = reservaGroups(filteredReservas());
+    var allMeals = mealCountOf(allToday);
+    var shownMeals = mealCountOf(rows);
     var pages = Math.max(1, Math.ceil(rows.length / RESERVA_PAGE_SIZE));
     if (reservaPage > pages) reservaPage = pages;
     if (reservaPage < 1) reservaPage = 1;
@@ -3215,9 +3286,9 @@
     var count = document.getElementById("reserva-count");
     if (count) {
       count.textContent =
-        rows.length === allToday.length
-          ? allToday.length + (allToday.length === 1 ? " reserva" : " reservas")
-          : rows.length + " de " + allToday.length;
+        shownMeals === allMeals
+          ? allMeals + (allMeals === 1 ? " reserva" : " reservas")
+          : shownMeals + " de " + allMeals;
     }
     var empty = table.parentNode.querySelector(".reserva-empty");
     if (!rows.length) {
@@ -3263,11 +3334,11 @@
     }
   }
   function renderReservas() {
-    var rows = todayReservas();
+    var rows = reservaGroups(todayReservas());
     return (
       '<header class="page-head"><p class="kicker">Administración</p><h1 class="h1">Reservas de hoy</h1><p class="sub">Filtra por supervisor o DNI. No es el listado global.</p></header>' +
       '<section class="card verify reserva-card">' +
-      reservaToolbar(rows.length) +
+      reservaToolbar(mealCountOf(rows)) +
       '<div class="table-wrap"><table class="admin-table reserva-table"><thead><tr><th>DNI</th><th>Trabajador</th><th>Comidas</th><th>Supervisor</th><th>Comedor</th><th>Tipo</th><th>Hora</th></tr></thead><tbody id="reserva-body"></tbody></table></div>' +
       '<div id="reserva-pager" class="team-pager" hidden></div>' +
       "</section>"

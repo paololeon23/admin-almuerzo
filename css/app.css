@@ -853,6 +853,46 @@ main:has(.kitchen) {
 }
 .sup-card .qty { font-size: clamp(24px, 4vw, 28px); font-weight: 800; color: var(--qb-dark); }
 .sup-card .muted { overflow-wrap: break-word; word-break: break-word; }
+.sup-card.has-signal { border-color: #f0d9a8; }
+.sup-signal {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 6px 10px 6px 8px;
+  border-radius: 999px;
+  background: #fff8eb;
+  color: #9a6b16;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+}
+.sup-wifi {
+  width: 18px;
+  height: 14px;
+  display: inline-flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.sup-wifi i {
+  display: block;
+  width: 3px;
+  border-radius: 2px;
+  background: #d7b36a;
+  transform-origin: bottom;
+  animation: sup-wifi-live 1.2s ease-in-out infinite;
+}
+.sup-wifi i:nth-child(1) { height: 5px; animation-delay: 0s; }
+.sup-wifi i:nth-child(2) { height: 9px; animation-delay: 0.15s; }
+.sup-wifi i:nth-child(3) { height: 13px; animation-delay: 0.3s; }
+@keyframes sup-wifi-live {
+  0%, 100% { opacity: 0.35; transform: scaleY(0.7); }
+  40% { opacity: 1; transform: scaleY(1); }
+  70% { opacity: 0.55; transform: scaleY(0.85); }
+}
 .plus {
   width: 34px;
   height: 34px;

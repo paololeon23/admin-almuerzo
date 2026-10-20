@@ -14,7 +14,7 @@
   root.QberriesConfig = {
     apiUrl: String(root.QBERRIES_API_URL || stored || fromMeta || "https://script.google.com/macros/s/AKfycbwJ96j5p83jznd5y1lj345TguxKoczjZkJnHIpY7IxBg8gt5P7v1TVb8_I0cTLQ-lwy/exec").trim(),
     pollMs: 8000,
-    timeoutMs: 12000,
+    timeoutMs: 90000,
     staleMs: 4000,
     retries: 2,
   };
