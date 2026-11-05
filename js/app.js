@@ -9,7 +9,7 @@
     var list = [];
     var n;
     for (n = 1; n <= 11; n += 1) list.push("Comedor " + n);
-    list.push("Comedor Galpón", "Garita 1", "Garita 2", "Comedor Administrativo");
+    list.push("Comedor Galpón", "Garita 1", "Garita 2", "Comedor Administrativo", "Comedor de Inducción");
     return list;
   })();
   var SUPERVISORS = [
